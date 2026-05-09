@@ -74,3 +74,7 @@ Press `Ctrl-E`, then type a command:
 - `goto <line>` or `g <line>`
 - `quit`, `q`, or `quit!`
 - `help`
+
+## License
+
+[MIT](LICENSE). micro’s runtime syntax YAML format is also MIT; vro uses a compatible subset, not copied highlight engine code.
