@@ -1,0 +1,72 @@
+name: Release
+
+# Mirrors inauguration: per-platform tarballs + .sha256 for wax / Homebrew parity.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            asset_suffix: macos-aarch64
+          - os: ubuntu-latest
+            asset_suffix: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build V from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/vlang/v.git "${HOME}/vlang"
+          cd "${HOME}/vlang"
+          make
+          "${HOME}/vlang/v" version
+
+      - name: Build vro
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${HOME}/vlang/v"
+          "${V}" -gc none -check main.v
+          "${V}" -gc none -prod -o vro main.v
+          test -x ./vro
+
+      - name: Package tarball and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp vro "dist/vro"
+          (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" vro)
+          (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.tar.gz" > "vro-${{ matrix.asset_suffix }}.sha256")
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.asset_suffix }}
+          path: dist/*
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

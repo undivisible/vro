@@ -25,14 +25,29 @@ v -gc none -prod -o vro main.v
 ./vro [file]
 ```
 
-## Homebrew (HEAD)
+## Install (pick one)
+
+Recommended order (same style as [inauguration](https://github.com/semitechnological/inauguration/blob/main/README.md#install-cli-pick-one)):
+
+**1. Prebuilt binaries (GitHub Releases)**
+
+Tagged releases publish `vro-macos-aarch64.tar.gz`, `vro-linux-x86_64.tar.gz`, and matching `*.sha256` checksum files (see [`.github/workflows/release.yml`](.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, extract the tarball, put `vro` on your `PATH`.
+
+**2. Wax (Homebrew-compatible parity)**
+
+```sh
+wax tap undivisible/tap
+wax install vro
+```
+
+**3. Homebrew tap**
 
 ```sh
 brew tap undivisible/tap https://github.com/undivisible/homebrew-tap
-brew install --HEAD vro
+brew install vro
 ```
 
-Requires the `vlang` formula to compile.
+Both **wax** and **brew** use the versioned formula with pinned `url` + `sha256` per platform (no compile step for end users).
 
 ## Keybindings
 
