@@ -12,6 +12,8 @@ import time
 #include <unistd.h>
 #include <time.h>
 
+const vro_version = '0.2.0'
+
 const tab_stop = 4
 const quit_times = 3
 
@@ -1096,7 +1098,47 @@ fn init_editor(mut e EditorConfig) {
 	e.quit_times_left = quit_times
 }
 
+fn print_vro_version() {
+	println('vro ${vro_version}')
+}
+
+fn print_vro_help() {
+	println('vro ${vro_version} — minimal terminal text editor')
+	println('')
+	println('Usage:')
+	println('  vro [options] [file]')
+	println('')
+	println('Options:')
+	println('  -h, -help, --help     Show this help and exit')
+	println('  -version, --version   Print version and exit')
+	println('')
+	println('With a file path, opens that file. Run without arguments to start an empty buffer.')
+}
+
+fn cli_early_exit(args []string) bool {
+	if args.len < 2 {
+		return false
+	}
+	match args[1] {
+		'-version', '--version' {
+			print_vro_version()
+			return true
+		}
+		'-h', '-help', '--help' {
+			print_vro_help()
+			return true
+		}
+		else {}
+	}
+	return false
+}
+
 fn main() {
+	args := os.args
+	if cli_early_exit(args) {
+		exit(0)
+	}
+
 	mut editor := EditorConfig{}
 	enable_raw_mode(mut editor)
 	defer {
@@ -1106,7 +1148,6 @@ fn main() {
 	init_editor(mut editor)
 	editor.hl_disable = os.getenv('NO_COLOR').len > 0 || os.getenv('VRO_NO_HL') == '1'
 
-	args := os.args
 	if args.len >= 2 {
 		editor_open(mut editor, args[1]) or {
 			editor_set_status_message(mut editor, 'Could not open file: ${err.msg()}')

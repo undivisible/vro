@@ -41,6 +41,8 @@ jobs:
           "${V}" -gc none test .
           "${V}" -gc none -prod -o vro .
           test -x ./vro
+          ./vro -version
+          ./vro --help >/dev/null
 
       - name: Package tarball and checksum
         shell: bash

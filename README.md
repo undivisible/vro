@@ -26,6 +26,17 @@ v -gc none -prod -o vro .
 ./vro [file]
 ```
 
+## CLI (no TTY)
+
+For scripts, CI, and quick checks, `vro` exits before touching the terminal when you pass:
+
+- `-version` or `--version` — print version and exit
+- `-h`, `-help`, or `--help` — print usage and exit
+
+Example: `./vro -version`
+
+**Benchmark** (optional, needs [hyperfine](https://github.com/sharkdp/hyperfine)): `bash scripts/bench-cli.sh` compares `vro -version` vs `micro -version`.
+
 ## Syntax highlighting
 
 Bundled rules for **V** (`syntax/v.yaml`). Optional overrides live in `~/.config/vro/syntax/<name>.yaml` where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Region rules continue across newlines (e.g. `/* … */`). Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`.
@@ -52,7 +63,7 @@ brew install vro
 
 Wax and Homebrew install the same prebuilt binaries (`url` + `sha256` per platform in the tap formula).
 
-To bump checksums after a new tag: `./scripts/print-release-shas.sh v0.x.y`, then update `../homebrew-tap/Formula/vro.rb`.
+After you publish a release tag (e.g. `v0.2.0`), refresh the tap: `./scripts/print-release-shas.sh v0.2.0`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb` and bump the `url` paths to match that tag. Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
 
 ## Keybindings
 
