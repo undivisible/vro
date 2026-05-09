@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build V from source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/vlang/v.git "${HOME}/vlang"
+          cd "${HOME}/vlang"
+          make
+          "${HOME}/vlang/v" version
+
+      - name: Check and build vro
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${HOME}/vlang/v"
+          "${V}" -gc none -check main.v
+          "${V}" -gc none -prod -o vro main.v
+          test -x ./vro
