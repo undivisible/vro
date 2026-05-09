@@ -3,6 +3,7 @@
 *.v   text eol=lf linguist-language=V
 *.md  text eol=lf
 *.yml text eol=lf
-*.sh  text eol=lf
+
+*.sh  linguist-detectable=false
 
 .github/** text eol=lf
