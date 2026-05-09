@@ -38,6 +38,7 @@ jobs:
           set -euo pipefail
           V="${HOME}/vlang/v"
           "${V}" -gc none -check .
+          "${V}" -gc none test .
           "${V}" -gc none -prod -o vro .
           test -x ./vro
 

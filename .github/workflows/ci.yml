@@ -25,11 +25,12 @@ jobs:
           make
           "${HOME}/vlang/v" version
 
-      - name: Check and build vro
+      - name: Check, test, and build vro
         shell: bash
         run: |
           set -euo pipefail
           V="${HOME}/vlang/v"
           "${V}" -gc none -check .
+          "${V}" -gc none test .
           "${V}" -gc none -prod -o vro .
           test -x ./vro

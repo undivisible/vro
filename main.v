@@ -29,6 +29,36 @@ fn ctrl_key(c u8) int {
 	return int(c & 0x1f)
 }
 
+// Strip terminal control bytes from strings shown in the status/command line.
+fn ui_sanitize_display(s string) string {
+	if s.len == 0 {
+		return ''
+	}
+	mut out := strings.new_builder(s.len)
+	for i := 0; i < s.len; i++ {
+		b := s[i]
+		if b == 0x1b || b == 0x7f || (b < 0x20 && b != `\t`) {
+			out.write_u8(`?`)
+		} else {
+			out.write_u8(b)
+		}
+	}
+	return out.str()
+}
+
+fn is_unsigned_decimal_int_string(s string) bool {
+	t := s.trim_space()
+	if t.len == 0 {
+		return false
+	}
+	for i := 0; i < t.len; i++ {
+		if t[i] < `0` || t[i] > `9` {
+			return false
+		}
+	}
+	return true
+}
+
 struct Erow {
 mut:
 	chars  []u8
@@ -60,10 +90,11 @@ mut:
 	hl_cache_path   string
 	hl_disable      bool
 	// Per-line region carry entering each row (multiline /* */, raw strings, …).
-	hl_carry_enter  [][]bool
-	hl_carry_lines  int
-	hl_carry_rules  int
-	hl_carry_valid  bool
+	hl_carry_enter     [][]bool
+	hl_carry_lines     int
+	hl_carry_rules     int
+	hl_carry_valid     bool
+	hl_carry_dirty_from int = -1 // >=0: suffix rebuild from this row (same row count as cache)
 }
 
 fn die(mut e EditorConfig, message string) {
@@ -265,6 +296,31 @@ fn editor_update_row(mut row Erow) {
 
 fn editor_hl_carry_invalidate(mut e EditorConfig) {
 	e.hl_carry_valid = false
+	e.hl_carry_dirty_from = -1
+}
+
+// After in-place edits on one row, recompute carry only from `row` downward (O(tail)).
+fn editor_hl_carry_mark_dirty_tail(mut e EditorConfig, row int) {
+	if e.hl_disable || e.hl_syn.rules.len == 0 {
+		return
+	}
+	if !e.hl_carry_valid || e.hl_carry_lines != e.rows.len || e.hl_carry_rules != e.hl_syn.rules.len
+		|| e.hl_carry_enter.len != e.rows.len {
+		return
+	}
+	if e.rows.len == 0 {
+		return
+	}
+	mut r := row
+	if r < 0 {
+		r = 0
+	}
+	if r >= e.rows.len {
+		r = e.rows.len - 1
+	}
+	if e.hl_carry_dirty_from < 0 || r < e.hl_carry_dirty_from {
+		e.hl_carry_dirty_from = r
+	}
 }
 
 fn editor_insert_row(mut e EditorConfig, at int, s string) {
@@ -315,15 +371,19 @@ fn editor_row_del_char(mut row Erow, at int) {
 }
 
 fn editor_insert_char(mut e EditorConfig, c u8) {
+	mut added_row := false
 	if e.cy == e.rows.len {
 		editor_insert_row(mut e, e.rows.len, '')
+		added_row = true
 	}
 	mut row := e.rows[e.cy]
 	editor_row_insert_char(mut row, e.cx, c)
 	e.rows[e.cy] = row
 	e.cx++
 	e.dirty++
-	editor_hl_carry_invalidate(mut e)
+	if !added_row {
+		editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+	}
 }
 
 fn editor_insert_newline(mut e EditorConfig) {
@@ -364,9 +424,11 @@ fn editor_del_char(mut e EditorConfig) {
 		editor_del_row(mut e, e.cy)
 		e.cy--
 		e.cx = prev_len
+		e.dirty++
+		return
 	}
 	e.dirty++
-	editor_hl_carry_invalidate(mut e)
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
 }
 
 fn editor_rows_to_string(e EditorConfig) string {
@@ -380,25 +442,37 @@ fn editor_rows_to_string(e EditorConfig) string {
 	return sb.str()
 }
 
+fn editor_load_buffer_lines(mut e EditorConfig, lines []string) {
+	e.rows = []Erow{}
+	for line in lines {
+		mut row := Erow{
+			chars: line.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		e.rows << row
+	}
+	e.words_dirty = true
+	editor_hl_carry_invalidate(mut e)
+}
+
 fn editor_open(mut e EditorConfig, filename string) ! {
 	e.hl_cache_path = ''
 	e.filename = filename
 	content := os.read_file(filename)!
-	lines := content.split_into_lines()
-	for line in lines {
-		editor_insert_row(mut e, e.rows.len, line)
-	}
+	editor_load_buffer_lines(mut e, content.split_into_lines())
+	e.cx = 0
+	e.cy = 0
+	e.rx = 0
+	e.rowoff = 0
+	e.coloff = 0
 	e.dirty = 0
 }
 
 fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 	e.hl_cache_path = ''
 	content := os.read_file(filename)!
-	lines := content.split_into_lines()
-	e.rows = []Erow{}
-	for line in lines {
-		editor_insert_row(mut e, e.rows.len, line)
-	}
+	editor_load_buffer_lines(mut e, content.split_into_lines())
 	e.filename = filename
 	e.cx = 0
 	e.cy = 0
@@ -473,13 +547,37 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 		e.hl_carry_enter = [][]bool{}
 		e.hl_carry_lines = e.rows.len
 		e.hl_carry_rules = e.hl_syn.rules.len
+		e.hl_carry_dirty_from = -1
 		e.hl_carry_valid = true
 		return
 	}
-	if e.hl_carry_valid && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == e.hl_syn.rules.len {
+	rl := e.hl_syn.rules.len
+
+	if e.hl_carry_valid && e.hl_carry_dirty_from >= 0 && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == rl
+		&& e.hl_carry_enter.len == e.rows.len && e.hl_carry_dirty_from < e.rows.len {
+		tf := e.hl_carry_dirty_from
+		mut carry := []bool{len: rl, init: false}
+		for ri in 0 .. rl {
+			carry[ri] = e.hl_carry_enter[tf][ri]
+		}
+		for li in tf .. e.rows.len {
+			mut snap := []bool{len: rl, init: false}
+			for ri in 0 .. rl {
+				snap[ri] = carry[ri]
+			}
+			e.hl_carry_enter[li] = snap
+			line := e.rows[li].render.bytestr()
+			carry = hl_carry_row(mut e.hl_syn, line, carry)
+		}
+		e.hl_carry_dirty_from = -1
 		return
 	}
-	rl := e.hl_syn.rules.len
+
+	if e.hl_carry_valid && e.hl_carry_dirty_from < 0 && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == rl {
+		return
+	}
+
+	e.hl_carry_dirty_from = -1
 	mut carry := []bool{len: rl, init: false}
 	e.hl_carry_enter = [][]bool{}
 	for li in 0 .. e.rows.len {
@@ -579,7 +677,7 @@ fn editor_word_count_get(mut e EditorConfig) int {
 fn editor_append_status_line(mut e EditorConfig, mut ab strings.Builder) {
 	mut left := ''
 	if e.command_mode {
-		left = e.command_buffer
+		left = ui_sanitize_display(e.command_buffer)
 	} else if time.now().unix() - e.statusmsg_time < 3 {
 		left = e.statusmsg
 	}
@@ -590,7 +688,7 @@ fn editor_append_status_line(mut e EditorConfig, mut ab strings.Builder) {
 		modified := if e.dirty > 0 { '*' } else { '' }
 		total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
 		wc := editor_word_count_get(mut e)
-		right = '${filename}${modified} ${wc}w ${e.cy + 1}/${total_lines}'
+		right = ui_sanitize_display('${filename}${modified} ${wc}w ${e.cy + 1}/${total_lines}')
 	}
 
 	mut l := left
@@ -622,7 +720,8 @@ fn editor_refresh_bottom_line_only(mut e EditorConfig) {
 	editor_append_status_line(mut e, mut ab)
 	mut cursor_x := 1
 	if e.command_mode {
-		cursor_x = e.command_buffer.len + 1
+		safe_cmd := ui_sanitize_display(e.command_buffer)
+		cursor_x = safe_cmd.len + 1
 		if cursor_x < 1 {
 			cursor_x = 1
 		}
@@ -645,7 +744,11 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	mut cursor_x := (e.rx - e.coloff) + 1
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
-		cursor_x = e.command_buffer.len + 1
+		safe_buf := ui_sanitize_display(e.command_buffer)
+		cursor_x = safe_buf.len + 1
+		if cursor_x > e.screencols {
+			cursor_x = e.screencols
+		}
 	}
 	if cursor_y < 1 {
 		cursor_y = 1
@@ -660,7 +763,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 }
 
 fn editor_set_status_message(mut e EditorConfig, msg string) {
-	e.statusmsg = msg
+	e.statusmsg = ui_sanitize_display(msg)
 	e.statusmsg_time = time.now().unix()
 }
 
@@ -878,7 +981,11 @@ fn editor_command_bar(mut e EditorConfig) bool {
 				editor_set_status_message(mut e, 'Usage: goto <line>')
 				return true
 			}
-			line := args.int()
+			if !is_unsigned_decimal_int_string(args) {
+				editor_set_status_message(mut e, 'goto expects a positive integer line number')
+				return true
+			}
+			line := args.trim_space().int()
 			if line <= 0 {
 				editor_set_status_message(mut e, 'Invalid line number')
 				return true
