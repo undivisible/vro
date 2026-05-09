@@ -68,12 +68,28 @@ fn enable_raw_mode(mut e EditorConfig) {
 	}
 
 	mut raw := e.orig_termios
-	raw.c_iflag &= ~(C.BRKINT | C.ICRNL | C.INPCK | C.ISTRIP | C.IXON)
-	raw.c_oflag &= ~(C.OPOST)
-	raw.c_cflag |= C.CS8
-	raw.c_lflag &= ~(C.ECHO | C.ICANON | C.IEXTEN | C.ISIG)
-	raw.c_cc[C.VMIN] = 0
-	raw.c_cc[C.VTIME] = 1
+	// macOS: V's C interop often leaves termios flag macros unusable; use XNU masks.
+	// Linux: keep libc macros (glibc tcflag_t).
+	$if macos {
+		// XNU termios masks; V maps tcflag_t fields as int on Darwin.
+		iflag_clr := 0x00000002 | 0x00000100 | 0x00000010 | 0x00000020 | 0x00000200
+		oflag_clr := 0x00000001
+		cflag_set := 0x00000300
+		lflag_clr := 0x00000008 | 0x00000100 | 0x00000400 | 0x00000080
+		raw.c_iflag &= ~iflag_clr
+		raw.c_oflag &= ~oflag_clr
+		raw.c_cflag |= cflag_set
+		raw.c_lflag &= ~lflag_clr
+		raw.c_cc[16] = 0
+		raw.c_cc[17] = 1
+	} $else {
+		raw.c_iflag &= ~(C.BRKINT | C.ICRNL | C.INPCK | C.ISTRIP | C.IXON)
+		raw.c_oflag &= ~(C.OPOST)
+		raw.c_cflag |= C.CS8
+		raw.c_lflag &= ~(C.ECHO | C.ICANON | C.IEXTEN | C.ISIG)
+		raw.c_cc[C.VMIN] = 0
+		raw.c_cc[C.VTIME] = 1
+	}
 
 	if C.tcsetattr(0, C.TCSAFLUSH, &raw) == -1 {
 		die(mut e, 'tcsetattr failed')
