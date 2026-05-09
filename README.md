@@ -28,7 +28,7 @@ v -gc none -prod -o vro .
 
 ## Syntax highlighting
 
-Bundled rules for **V** (`syntax/v.yaml`). Optional overrides: `~/.config/vro/syntax/v.yaml` (same schema). Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`.
+Bundled rules for **V** (`syntax/v.yaml`). Optional overrides live in `~/.config/vro/syntax/<name>.yaml` where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`.
 
 ## Install
 
@@ -77,4 +77,4 @@ Press `Ctrl-E`, then type a command:
 
 ## License
 
-[MIT](LICENSE). micro’s runtime syntax YAML format is also MIT; vro uses a compatible subset, not copied highlight engine code.
+[MPL 2.0](LICENSE). Optional user syntax YAML may mirror micro’s MIT-licensed definition layout; vro ships its own highlighter, not micro’s Go engine.

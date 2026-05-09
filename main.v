@@ -1,4 +1,5 @@
 module main
+// SPDX-License-Identifier: MPL-2.0
 
 import os
 import term

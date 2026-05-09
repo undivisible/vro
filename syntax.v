@@ -1,4 +1,5 @@
 module main
+// SPDX-License-Identifier: MPL-2.0
 
 import os
 import regex
@@ -425,14 +426,39 @@ fn syntax_matches_path(syn &CompiledSyntax, path string) bool {
 	return s >= 0 && e2 > s
 }
 
+// Micro-style syntax bundle names (see micro runtime/syntax/*.yaml).
+fn syntax_name_for_ext(ext string) string {
+	return match ext {
+		'.v', '.vv', '.vsh' { 'v' }
+		'.go' { 'go' }
+		'.rs' { 'rust' }
+		'.c', '.h' { 'c' }
+		'.py', '.pyw' { 'python' }
+		'.js', '.mjs', '.cjs' { 'javascript' }
+		'.ts', '.tsx' { 'typescript' }
+		'.json' { 'json' }
+		'.yaml', '.yml' { 'yaml' }
+		'.md', '.mdx' { 'markdown' }
+		'.sh', '.bash', '.zsh' { 'shell' }
+		'.toml' { 'toml' }
+		'.html', '.htm' { 'html' }
+		'.css' { 'css' }
+		'.sql' { 'sql' }
+		'.zig' { 'zig' }
+		'.cc', '.cxx', '.cpp', '.hpp', '.hxx' { 'cpp' }
+		else {
+			if ext.len > 1 && ext[0] == `.` {
+				return ext[1..]
+			}
+			''
+		}
+	}
+}
+
 fn load_syntax_for_path(path string) ?CompiledSyntax {
 	ext := os.file_ext(path)
 	mut yaml_src := ''
-	// Map common extensions to micro-style filenames (lazy: try one name).
-	ft := match ext {
-		'.v', '.vv', '.vsh' { 'v' }
-		else { '' }
-	}
+	ft := syntax_name_for_ext(ext)
 	if ft.len > 0 {
 		userp := os.join_path(syntax_user_dir(), '${ft}.yaml')
 		if os.exists(userp) {
