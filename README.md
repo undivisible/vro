@@ -31,7 +31,9 @@ Recommended order (same style as [inauguration](https://github.com/semitechnolog
 
 **1. Prebuilt binaries (GitHub Releases)**
 
-Tagged releases publish `vro-macos-aarch64.tar.gz`, `vro-linux-x86_64.tar.gz`, and matching `*.sha256` checksum files (see [`.github/workflows/release.yml`](.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, extract the tarball, put `vro` on your `PATH`.
+Tagged releases publish `vro-macos-aarch64.tar.gz`, `vro-linux-x86_64.tar.gz`, and matching `*.sha256` checksum files (see [`.github/workflows/release.yml`](.github/workflows/release.yml), same idea as [inauguration’s release workflow](https://github.com/semitechnological/inauguration/blob/main/.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, extract the tarball, put `vro` on your `PATH`.
+
+After tagging a new version, refresh the tap formula checksums with `./scripts/print-release-shas.sh v0.x.y` and paste into `../homebrew-tap/Formula/vro.rb`.
 
 **2. Wax (Homebrew-compatible parity)**
 
