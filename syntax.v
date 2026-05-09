@@ -292,31 +292,57 @@ fn group_to_ansi(group string) string {
 	return '\x1b[96m'
 }
 
-fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, mut cr CompiledReg) {
+// Find end pattern from search (same skip rules as micro-style regions).
+fn hl_region_find_end(mut cr CompiledReg, line string, search int) int {
+	mut s := search
+	for s <= line.len {
+		es2, ee2 := cr.en.find_from(line, s)
+		if es2 >= 0 && ee2 > es2 {
+			return ee2
+		}
+		if cr.has_skip {
+			ssk, esk := cr.sk.find_from(line, s)
+			if ssk >= 0 && esk > ssk && (es2 < 0 || ssk <= es2) {
+				s = esk
+				continue
+			}
+		}
+		break
+	}
+	return -1
+}
+
+// carry_in: region opened on a previous line without a closing end yet.
+// Returns carry_out: true if the region is still unclosed at end of this line.
+fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, mut cr CompiledReg, carry_in bool) bool {
 	mut pos := 0
+	if carry_in {
+		end_abs := hl_region_find_end(mut cr, line, 0)
+		if end_abs < 0 {
+			for k := 0; k < line.len; k++ {
+				if owners[k] == -1 {
+					owners[k] = ri
+					groups[k] = cr.group
+				}
+			}
+			return true
+		}
+		for k := 0; k < end_abs && k < line.len; k++ {
+			if owners[k] == -1 {
+				owners[k] = ri
+				groups[k] = cr.group
+			}
+		}
+		pos = end_abs
+	}
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
 		if st < 0 || en <= st {
 			pos++
 			continue
 		}
-		mut search := en
-		mut end_abs := -1
-		for search <= line.len {
-			es2, ee2 := cr.en.find_from(line, search)
-			if es2 >= 0 && ee2 > es2 {
-				end_abs = ee2
-				break
-			}
-			if cr.has_skip {
-				ssk, esk := cr.sk.find_from(line, search)
-				if ssk >= 0 && esk > ssk && (es2 < 0 || ssk <= es2) {
-					search = esk
-					continue
-				}
-			}
-			break
-		}
+		search := en
+		end_abs := hl_region_find_end(mut cr, line, search)
 		if end_abs < 0 {
 			for k := st; k < line.len; k++ {
 				if owners[k] == -1 {
@@ -324,7 +350,7 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 					groups[k] = cr.group
 				}
 			}
-			return
+			return true
 		}
 		for k := st; k < end_abs && k < line.len; k++ {
 			if owners[k] == -1 {
@@ -334,6 +360,49 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 		}
 		pos = end_abs
 	}
+	return false
+}
+
+// Region carry only (no coloring). Must stay in sync with hl_apply_region.
+fn hl_reg_carry_through_line(mut cr CompiledReg, line string, carry_in bool) bool {
+	mut pos := 0
+	if carry_in {
+		end_abs := hl_region_find_end(mut cr, line, 0)
+		if end_abs < 0 {
+			return true
+		}
+		pos = end_abs
+	}
+	for pos < line.len {
+		st, en := cr.st.find_from(line, pos)
+		if st < 0 || en <= st {
+			pos++
+			continue
+		}
+		end_abs := hl_region_find_end(mut cr, line, en)
+		if end_abs < 0 {
+			return true
+		}
+		pos = end_abs
+	}
+	return false
+}
+
+fn hl_carry_row(mut syn CompiledSyntax, line string, carry []bool) []bool {
+	mut next := []bool{len: syn.rules.len, init: false}
+	for ri in 0 .. syn.rules.len {
+		match syn.rules[ri].kind {
+			.pat {
+				next[ri] = false
+			}
+			.reg {
+				mut r := syn.rules[ri].reg
+				ci := ri < carry.len && carry[ri]
+				next[ri] = hl_reg_carry_through_line(mut r, line, ci)
+			}
+		}
+	}
+	return next
 }
 
 fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, mut cp CompiledPat) {
@@ -354,28 +423,33 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 	}
 }
 
-fn hl_fill_owners(mut syn CompiledSyntax, line string) ([]int, []string) {
+fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, []string, []bool) {
 	mut owners := []int{len: line.len, init: -1}
 	mut groups := []string{len: line.len, init: ''}
+	mut carry_out := []bool{len: syn.rules.len, init: false}
 	for ri in 0 .. syn.rules.len {
 		match syn.rules[ri].kind {
 			.pat {
 				mut p := syn.rules[ri].pat
 				hl_apply_pattern(mut owners, mut groups, line, ri, mut p)
 				syn.rules[ri].pat = p
+				carry_out[ri] = false
 			}
 			.reg {
 				mut r := syn.rules[ri].reg
-				hl_apply_region(mut owners, mut groups, line, ri, mut r)
+				ci := if ri < carry_in.len { carry_in[ri] } else { false }
+				co := hl_apply_region(mut owners, mut groups, line, ri, mut r, ci)
 				syn.rules[ri].reg = r
+				carry_out[ri] = co
 			}
 		}
 	}
-	return owners, groups
+	return owners, groups, carry_out
 }
 
 // Emit logical slice [coloff .. coloff+width) with ANSI (escapes are zero-width in terminal).
-fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int, mut ab strings.Builder) {
+// carry_in: per-rule region continuation from previous physical line (see editor hl_carry_enter).
+fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int, carry_in []bool, mut ab strings.Builder) {
 	if syn.rules.len == 0 || line.len == 0 || width <= 0 {
 		if line.len > coloff {
 			mut n := line.len - coloff
@@ -388,7 +462,7 @@ fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int
 		}
 		return
 	}
-	owners, groups := hl_fill_owners(mut syn, line)
+	owners, groups, _ := hl_fill_owners(mut syn, line, carry_in)
 	mut i := coloff
 	mut limit := coloff + width
 	if limit > line.len {

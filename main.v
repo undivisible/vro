@@ -56,9 +56,14 @@ mut:
 	quit_times_left int
 	orig_termios    C.termios
 	// syntax highlighting (YAML; see syntax/)
-	hl_syn         CompiledSyntax
-	hl_cache_path  string
-	hl_disable     bool
+	hl_syn          CompiledSyntax
+	hl_cache_path   string
+	hl_disable      bool
+	// Per-line region carry entering each row (multiline /* */, raw strings, …).
+	hl_carry_enter  [][]bool
+	hl_carry_lines  int
+	hl_carry_rules  int
+	hl_carry_valid  bool
 }
 
 fn die(mut e EditorConfig, message string) {
@@ -258,6 +263,10 @@ fn editor_update_row(mut row Erow) {
 	row.render = renderer
 }
 
+fn editor_hl_carry_invalidate(mut e EditorConfig) {
+	e.hl_carry_valid = false
+}
+
 fn editor_insert_row(mut e EditorConfig, at int, s string) {
 	if at < 0 || at > e.rows.len {
 		return
@@ -270,6 +279,7 @@ fn editor_insert_row(mut e EditorConfig, at int, s string) {
 	e.rows.insert(at, row)
 	e.dirty++
 	e.words_dirty = true
+	editor_hl_carry_invalidate(mut e)
 }
 
 fn editor_del_row(mut e EditorConfig, at int) {
@@ -279,6 +289,7 @@ fn editor_del_row(mut e EditorConfig, at int) {
 	e.rows.delete(at)
 	e.dirty++
 	e.words_dirty = true
+	editor_hl_carry_invalidate(mut e)
 }
 
 fn editor_row_insert_char(mut row Erow, at int, c u8) {
@@ -312,6 +323,7 @@ fn editor_insert_char(mut e EditorConfig, c u8) {
 	e.rows[e.cy] = row
 	e.cx++
 	e.dirty++
+	editor_hl_carry_invalidate(mut e)
 }
 
 fn editor_insert_newline(mut e EditorConfig) {
@@ -354,6 +366,7 @@ fn editor_del_char(mut e EditorConfig) {
 		e.cx = prev_len
 	}
 	e.dirty++
+	editor_hl_carry_invalidate(mut e)
 }
 
 fn editor_rows_to_string(e EditorConfig) string {
@@ -443,6 +456,7 @@ fn editor_ensure_syntax(mut e EditorConfig) {
 		return
 	}
 	e.hl_cache_path = e.filename
+	editor_hl_carry_invalidate(mut e)
 	if e.filename.len == 0 {
 		e.hl_syn = CompiledSyntax{}
 		return
@@ -452,6 +466,34 @@ fn editor_ensure_syntax(mut e EditorConfig) {
 	} else {
 		e.hl_syn = CompiledSyntax{}
 	}
+}
+
+fn editor_ensure_hl_carry(mut e EditorConfig) {
+	if e.hl_disable || e.hl_syn.rules.len == 0 {
+		e.hl_carry_enter = [][]bool{}
+		e.hl_carry_lines = e.rows.len
+		e.hl_carry_rules = e.hl_syn.rules.len
+		e.hl_carry_valid = true
+		return
+	}
+	if e.hl_carry_valid && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == e.hl_syn.rules.len {
+		return
+	}
+	rl := e.hl_syn.rules.len
+	mut carry := []bool{len: rl, init: false}
+	e.hl_carry_enter = [][]bool{}
+	for li in 0 .. e.rows.len {
+		mut snap := []bool{len: rl, init: false}
+		for ri in 0 .. rl {
+			snap[ri] = carry[ri]
+		}
+		e.hl_carry_enter << snap
+		line := e.rows[li].render.bytestr()
+		carry = hl_carry_row(mut e.hl_syn, line, carry)
+	}
+	e.hl_carry_lines = e.rows.len
+	e.hl_carry_rules = rl
+	e.hl_carry_valid = true
 }
 
 fn editor_scroll(mut e EditorConfig) {
@@ -475,6 +517,7 @@ fn editor_scroll(mut e EditorConfig) {
 
 fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 	editor_ensure_syntax(mut e)
+	editor_ensure_hl_carry(mut e)
 	for y in 0 .. e.screenrows {
 		filerow := y + e.rowoff
 		if filerow >= e.rows.len {
@@ -490,7 +533,12 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 			}
 			if len > 0 {
 				if e.hl_syn.rules.len > 0 && !e.hl_disable {
-					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, mut ab)
+					carry_in := if filerow < e.hl_carry_enter.len {
+						e.hl_carry_enter[filerow]
+					} else {
+						[]bool{}
+					}
+					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut ab)
 				} else {
 					ab.write_string(render[e.coloff..e.coloff + len])
 				}
