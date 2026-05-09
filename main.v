@@ -54,6 +54,10 @@ mut:
 	words_dirty     bool = true
 	quit_times_left int
 	orig_termios    C.termios
+	// syntax highlighting (YAML; see syntax/)
+	hl_syn         CompiledSyntax
+	hl_cache_path  string
+	hl_disable     bool
 }
 
 fn die(mut e EditorConfig, message string) {
@@ -363,6 +367,7 @@ fn editor_rows_to_string(e EditorConfig) string {
 }
 
 fn editor_open(mut e EditorConfig, filename string) ! {
+	e.hl_cache_path = ''
 	e.filename = filename
 	content := os.read_file(filename)!
 	lines := content.split_into_lines()
@@ -373,6 +378,7 @@ fn editor_open(mut e EditorConfig, filename string) ! {
 }
 
 fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
+	e.hl_cache_path = ''
 	content := os.read_file(filename)!
 	lines := content.split_into_lines()
 	e.rows = []Erow{}
@@ -428,6 +434,25 @@ fn editor_find_literal(mut e EditorConfig, query string) bool {
 	return false
 }
 
+fn editor_ensure_syntax(mut e EditorConfig) {
+	if e.hl_disable {
+		return
+	}
+	if e.filename == e.hl_cache_path {
+		return
+	}
+	e.hl_cache_path = e.filename
+	if e.filename.len == 0 {
+		e.hl_syn = CompiledSyntax{}
+		return
+	}
+	if s := load_syntax_for_path(e.filename) {
+		e.hl_syn = s
+	} else {
+		e.hl_syn = CompiledSyntax{}
+	}
+}
+
 fn editor_scroll(mut e EditorConfig) {
 	e.rx = 0
 	if e.cy < e.rows.len {
@@ -447,13 +472,14 @@ fn editor_scroll(mut e EditorConfig) {
 	}
 }
 
-fn editor_draw_rows(e EditorConfig, mut ab strings.Builder) {
+fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
+	editor_ensure_syntax(mut e)
 	for y in 0 .. e.screenrows {
 		filerow := y + e.rowoff
 		if filerow >= e.rows.len {
 			// Keep empty rows visually blank like a plain editor.
 		} else {
-			render := e.rows[filerow].render
+			render := e.rows[filerow].render.bytestr()
 			mut len := render.len - e.coloff
 			if len < 0 {
 				len = 0
@@ -462,7 +488,11 @@ fn editor_draw_rows(e EditorConfig, mut ab strings.Builder) {
 				len = e.screencols
 			}
 			if len > 0 {
-				ab.write_string(render[e.coloff..e.coloff + len].bytestr())
+				if e.hl_syn.rules.len > 0 && !e.hl_disable {
+					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, mut ab)
+				} else {
+					ab.write_string(render[e.coloff..e.coloff + len])
+				}
 			}
 		}
 		ab.write_string('\x1b[K')
@@ -560,7 +590,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 
 	mut ab := strings.new_builder(4096)
 	ab.write_string('\x1b[H')
-	editor_draw_rows(e, mut ab)
+	editor_draw_rows(mut e, mut ab)
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
 	mut cursor_x := (e.rx - e.coloff) + 1
@@ -918,6 +948,7 @@ fn main() {
 	}
 
 	init_editor(mut editor)
+	editor.hl_disable = os.getenv('NO_COLOR').len > 0 || os.getenv('VRO_NO_HL') == '1'
 
 	args := os.args
 	if args.len >= 2 {

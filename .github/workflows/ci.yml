@@ -30,6 +30,6 @@ jobs:
         run: |
           set -euo pipefail
           V="${HOME}/vlang/v"
-          "${V}" -gc none -check main.v
-          "${V}" -gc none -prod -o vro main.v
+          "${V}" -gc none -check .
+          "${V}" -gc none -prod -o vro .
           test -x ./vro

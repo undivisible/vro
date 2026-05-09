@@ -11,19 +11,24 @@ A small `micro`-inspired terminal text editor written in V.
 - Incremental search with `Ctrl-F`
 - Command bar with `Ctrl-E`
 - Dirty-file quit protection with `Ctrl-Q`
+- Micro-style **YAML** syntax highlighting (V regex engine; see `syntax/`)
 
 ## Run
 
 ```sh
-v -gc none run main.v [file]
+v -gc none run . [file]
 ```
 
 ## Build
 
 ```sh
-v -gc none -prod -o vro main.v
+v -gc none -prod -o vro .
 ./vro [file]
 ```
+
+## Syntax highlighting
+
+Bundled rules for **V** (`syntax/v.yaml`). Optional overrides: `~/.config/vro/syntax/v.yaml` (same schema). Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`.
 
 ## Install
 
