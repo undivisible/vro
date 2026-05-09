@@ -1,0 +1,8 @@
+* text=auto eol=lf
+
+*.v   text eol=lf linguist-language=V
+*.md  text eol=lf
+*.yml text eol=lf
+*.sh  text eol=lf
+
+.github/** text eol=lf

@@ -25,31 +25,29 @@ v -gc none -prod -o vro main.v
 ./vro [file]
 ```
 
-## Install (pick one)
+## Install
 
-Recommended order (same style as [inauguration](https://github.com/semitechnological/inauguration/blob/main/README.md#install-cli-pick-one)):
+**Prebuilt (GitHub Releases)**
 
-**1. Prebuilt binaries (GitHub Releases)**
+Tarballs and `*.sha256` files are attached to each `v*` tag (see [`.github/workflows/release.yml`](.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, unpack, put `vro` on your `PATH`.
 
-Tagged releases publish `vro-macos-aarch64.tar.gz`, `vro-linux-x86_64.tar.gz`, and matching `*.sha256` checksum files (see [`.github/workflows/release.yml`](.github/workflows/release.yml), same idea as [inauguration’s release workflow](https://github.com/semitechnological/inauguration/blob/main/.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, extract the tarball, put `vro` on your `PATH`.
-
-After tagging a new version, refresh the tap formula checksums with `./scripts/print-release-shas.sh v0.x.y` and paste into `../homebrew-tap/Formula/vro.rb`.
-
-**2. Wax (Homebrew-compatible parity)**
+**Wax**
 
 ```sh
 wax tap undivisible/tap
 wax install vro
 ```
 
-**3. Homebrew tap**
+**Homebrew**
 
 ```sh
 brew tap undivisible/tap https://github.com/undivisible/homebrew-tap
 brew install vro
 ```
 
-Both **wax** and **brew** use the versioned formula with pinned `url` + `sha256` per platform (no compile step for end users).
+Wax and Homebrew install the same prebuilt binaries (`url` + `sha256` per platform in the tap formula).
+
+To bump checksums after a new tag: `./scripts/print-release-shas.sh v0.x.y`, then update `../homebrew-tap/Formula/vro.rb`.
 
 ## Keybindings
 
