@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | b
 ```
 
 Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
-`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.1`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.2`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
 
 **Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
 
@@ -74,7 +74,7 @@ brew install vro
 
 Wax and Homebrew install the same prebuilt binaries (`url` + `sha256` per platform in the tap formula).
 
-After you publish a release tag (e.g. `v0.3.1`), refresh the tap: `./scripts/print-release-shas.sh v0.3.1`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
+After you publish a release tag (e.g. `v0.3.2`), refresh the tap: `./scripts/print-release-shas.sh v0.3.2`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
 
 ## Keybindings
 

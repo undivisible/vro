@@ -3,6 +3,8 @@ module main
 
 #include <unistd.h>
 
+fn C.usleep(u32) int
+
 enum EditorInputKind {
 	key_ev
 	mouse_ev
@@ -21,9 +23,15 @@ struct EditorInput {
 
 fn tty_read_u8() int {
 	mut b := [1]u8{}
-	n := C.read(0, &b[0], 1)
-	if n == 1 {
-		return int(b[0])
+	for {
+		n := C.read(0, &b[0], 1)
+		if n == 1 {
+			return int(b[0])
+		}
+		if n == -1 {
+			return -1
+		}
+		C.usleep(1000)
 	}
 	return -1
 }

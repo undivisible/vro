@@ -13,7 +13,7 @@ import time
 #include <time.h>
 #include <stdio.h>
 
-const vro_version = '0.3.1'
+const vro_version = '0.3.2'
 
 const tab_stop = 4
 const quit_times = 3
@@ -92,6 +92,8 @@ mut:
 	command_buffer  string
 	// Byte offset in command_buffer where the caret sits (prompt + cmd text); command_mode only.
 	cmd_caret_bytes int
+	// Sanitized command/status text trimmed by this many bytes so metadata fits on the right.
+	cmd_line_left_skip int
 	word_count      int
 	words_dirty     bool = true
 	quit_times_left int
@@ -138,15 +140,16 @@ fn enable_raw_mode(mut e EditorConfig) {
 		raw.c_oflag &= ~oflag_clr
 		raw.c_cflag |= cflag_set
 		raw.c_lflag &= ~lflag_clr
-		raw.c_cc[16] = 0
-		raw.c_cc[17] = 1
+		// Darwin: VMIN=16, VTIME=17 — block until one byte (no idle read()→0 spin).
+		raw.c_cc[16] = 1
+		raw.c_cc[17] = 0
 	} $else {
 		raw.c_iflag &= ~(C.BRKINT | C.ICRNL | C.INPCK | C.ISTRIP | C.IXON)
 		raw.c_oflag &= ~(C.OPOST)
 		raw.c_cflag |= C.CS8
 		raw.c_lflag &= ~(C.ECHO | C.ICANON | C.IEXTEN | C.ISIG)
-		raw.c_cc[C.VMIN] = 0
-		raw.c_cc[C.VTIME] = 1
+		raw.c_cc[C.VMIN] = 1
+		raw.c_cc[C.VTIME] = 0
 	}
 
 	if C.tcsetattr(0, C.TCSAFLUSH, &raw) == -1 {
@@ -631,47 +634,87 @@ fn editor_word_count_get(mut e EditorConfig) int {
 	return e.word_count
 }
 
-// One bottom line: default background (no reverse video). Command mode: input left, dim metadata right.
-fn editor_append_status_line(mut e EditorConfig, mut ab strings.Builder) {
-	mut left := ''
+fn editor_status_footer_parts(mut e EditorConfig) (string, string) {
+	mut raw_left := ''
 	if e.command_mode {
-		left = ui_sanitize_display(e.command_buffer)
+		raw_left = e.command_buffer
 	} else if time.now().unix() - e.statusmsg_time < 3 {
-		left = e.statusmsg
+		raw_left = e.statusmsg
 	}
+	left_full := ui_sanitize_display(raw_left)
 
-	mut right := ''
 	filename := if e.filename == '' { '[No Name]' } else { e.filename }
 	modified := if e.dirty > 0 { '*' } else { '' }
 	total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
-	wc := editor_word_count_get(mut e)
+	wc := if e.command_mode {
+		e.word_count
+	} else {
+		editor_word_count_get(mut e)
+	}
 	mut line_no := e.cy + 1
 	if e.cy >= e.rows.len {
 		line_no = total_lines
 	}
 	col_no := e.cx + 1
-	if e.command_mode {
-		right = ui_sanitize_display('${filename}${modified} ${wc}w L${line_no}/${total_lines} C${col_no}')
+	right := if e.command_mode {
+		ui_sanitize_display('${filename}${modified} ${wc}w L${line_no}/${total_lines} C${col_no}')
 	} else {
-		right = ui_sanitize_display('${filename}${modified} L${line_no}/${total_lines} C${col_no} ${wc}w')
+		ui_sanitize_display('${filename}${modified} L${line_no}/${total_lines} C${col_no} ${wc}w')
+	}
+	return left_full, right
+}
+
+// One bottom line: reserve columns for dim metadata on the right; truncate command/status from the left.
+fn editor_append_status_line(mut e EditorConfig, mut ab strings.Builder) {
+	left_full, right := editor_status_footer_parts(mut e)
+
+	mut max_left := e.screencols - right.len
+	if max_left < 1 {
+		max_left = 1
+	}
+	mut skip := 0
+	mut visible := left_full
+	if left_full.len > max_left {
+		skip = left_full.len - max_left
+		visible = left_full[skip..]
+	}
+	if e.command_mode {
+		e.cmd_line_left_skip = skip
+	} else {
+		e.cmd_line_left_skip = 0
 	}
 
-	mut l := left
-	if l.len > e.screencols {
-		l = l[..e.screencols]
-	}
-	ab.write_string(l)
-	mut used := l.len
-	for used < e.screencols {
-		if right.len > 0 && e.screencols - used == right.len {
-			ab.write_string('\x1b[90m')
-			ab.write_string(right)
-			ab.write_string('\x1b[0m')
-			break
-		}
+	ab.write_string(visible)
+	mut used := visible.len
+	target := e.screencols - right.len
+	for used < target {
 		ab.write_u8(` `)
 		used++
 	}
+	if right.len > 0 {
+		ab.write_string('\x1b[90m')
+		ab.write_string(right)
+		ab.write_string('\x1b[0m')
+	}
+}
+
+fn editor_footer_caret_column(mut e EditorConfig) int {
+	if !e.command_mode {
+		return 1
+	}
+	_, right := editor_status_footer_parts(mut e)
+	mut max_left := e.screencols - right.len
+	if max_left < 1 {
+		max_left = 1
+	}
+	mut cx := e.cmd_caret_bytes - e.cmd_line_left_skip + 1
+	if cx < 1 {
+		cx = 1
+	}
+	if cx > max_left {
+		cx = max_left
+	}
+	return cx
 }
 
 fn editor_draw_status_bar(mut e EditorConfig, mut ab strings.Builder) {
@@ -683,24 +726,7 @@ fn editor_refresh_bottom_line_only(mut e EditorConfig) {
 	mut ab := strings.new_builder(256)
 	ab.write_string('\x1b[${e.screenrows + 1};1H\x1b[K')
 	editor_append_status_line(mut e, mut ab)
-	mut cursor_x := 1
-	if e.command_mode {
-		safe_cmd := ui_sanitize_display(e.command_buffer)
-		mut px := e.cmd_caret_bytes
-		if px < 0 {
-			px = 0
-		}
-		if px > safe_cmd.len {
-			px = safe_cmd.len
-		}
-		cursor_x = px + 1
-		if cursor_x < 1 {
-			cursor_x = 1
-		}
-		if cursor_x > e.screencols {
-			cursor_x = e.screencols
-		}
-	}
+	cursor_x := editor_footer_caret_column(mut e)
 	ab.write_string('\x1b[${e.screenrows + 1};${cursor_x}H\x1b[?25h')
 	print(ab.str())
 	tty_flush()
@@ -710,25 +736,14 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	editor_scroll(mut e)
 
 	mut ab := strings.new_builder(4096)
-	ab.write_string('\x1b[?25l\x1b[H')
+	ab.write_string('\x1b[H')
 	editor_draw_rows(mut e, mut ab)
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
 	mut cursor_x := (e.rx - e.coloff) + 1
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
-		safe_buf := ui_sanitize_display(e.command_buffer)
-		mut px := e.cmd_caret_bytes
-		if px < 0 {
-			px = 0
-		}
-		if px > safe_buf.len {
-			px = safe_buf.len
-		}
-		cursor_x = px + 1
-		if cursor_x > e.screencols {
-			cursor_x = e.screencols
-		}
+		cursor_x = editor_footer_caret_column(mut e)
 	}
 	if cursor_y < 1 {
 		cursor_y = 1
@@ -1334,8 +1349,9 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	}
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
+		plural := if e.quit_times_left == 1 { '' } else { 's' }
 		editor_set_status_message(mut e,
-			'Unsaved changes. Press Ctrl-Q ${e.quit_times_left} more time(s) to force quit.')
+			'Unsaved (${e.quit_times_left} more Ctrl-Q press${plural} forces quit)')
 		return true
 	}
 	print('\x1b[2J')
