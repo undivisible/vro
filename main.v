@@ -13,7 +13,7 @@ import time
 #include <time.h>
 #include <stdio.h>
 
-const vro_version = '0.3.0'
+const vro_version = '0.3.1'
 
 const tab_stop = 4
 const quit_times = 3
