@@ -28,6 +28,17 @@ fn tty_read_u8() int {
 	return -1
 }
 
+// True for a normal button press (0–2). Ignores wheel (≥64), motion/drag (≥32), release codes.
+fn sgr_mouse_is_plain_press(btn int) bool {
+	if btn >= 64 {
+		return false
+	}
+	if btn >= 32 {
+		return false
+	}
+	return btn >= 0 && btn <= 2
+}
+
 fn parse_sgr_mouse(body string) ?EditorInput {
 	if body.len < 5 {
 		return none
@@ -143,9 +154,10 @@ fn editor_read_key() int {
 }
 
 fn term_mouse_enable() {
-	print('\x1b[?1000h\x1b[?1002h\x1b[?1006h')
+	// 1002 (cell motion) floods events and broke quit countdown; 1000+1006 is enough for clicks.
+	print('\x1b[?1000h\x1b[?1006h')
 }
 
 fn term_mouse_disable() {
-	print('\x1b[?1006l\x1b[?1002l\x1b[?1000l')
+	print('\x1b[?1006l\x1b[?1000l')
 }

@@ -11,6 +11,7 @@ import time
 #include <termios.h>
 #include <unistd.h>
 #include <time.h>
+#include <stdio.h>
 
 const vro_version = '0.3.0'
 
@@ -29,6 +30,12 @@ const key_page_down = 1008
 
 fn ctrl_key(c u8) int {
 	return int(c & 0x1f)
+}
+
+fn tty_flush() {
+	unsafe {
+		C.fflush(C.stdout)
+	}
 }
 
 // Strip terminal control bytes from strings shown in the status/command line.
@@ -83,6 +90,8 @@ mut:
 	statusmsg_time  i64
 	command_mode    bool
 	command_buffer  string
+	// Byte offset in command_buffer where the caret sits (prompt + cmd text); command_mode only.
+	cmd_caret_bytes int
 	word_count      int
 	words_dirty     bool = true
 	quit_times_left int
@@ -432,7 +441,7 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 
 fn editor_save(mut e EditorConfig) {
 	if e.filename == '' {
-		filename := editor_prompt(mut e, '%s', fn (mut _e EditorConfig, _query string, _key int) {}) or {
+		filename := editor_prompt(mut e, '> %s', true, fn (mut _e EditorConfig, _query string, _key int) {}) or {
 			editor_set_status_message(mut e, '')
 			return
 		}
@@ -445,6 +454,7 @@ fn editor_save(mut e EditorConfig) {
 		return
 	}
 	e.dirty = 0
+	e.quit_times_left = quit_times
 	editor_set_status_message(mut e, '${data.len} bytes written to disk')
 }
 
@@ -676,7 +686,14 @@ fn editor_refresh_bottom_line_only(mut e EditorConfig) {
 	mut cursor_x := 1
 	if e.command_mode {
 		safe_cmd := ui_sanitize_display(e.command_buffer)
-		cursor_x = safe_cmd.len + 1
+		mut px := e.cmd_caret_bytes
+		if px < 0 {
+			px = 0
+		}
+		if px > safe_cmd.len {
+			px = safe_cmd.len
+		}
+		cursor_x = px + 1
 		if cursor_x < 1 {
 			cursor_x = 1
 		}
@@ -686,13 +703,14 @@ fn editor_refresh_bottom_line_only(mut e EditorConfig) {
 	}
 	ab.write_string('\x1b[${e.screenrows + 1};${cursor_x}H\x1b[?25h')
 	print(ab.str())
+	tty_flush()
 }
 
 fn editor_refresh_screen(mut e EditorConfig) {
 	editor_scroll(mut e)
 
 	mut ab := strings.new_builder(4096)
-	ab.write_string('\x1b[H')
+	ab.write_string('\x1b[?25l\x1b[H')
 	editor_draw_rows(mut e, mut ab)
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
@@ -700,7 +718,14 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
 		safe_buf := ui_sanitize_display(e.command_buffer)
-		cursor_x = safe_buf.len + 1
+		mut px := e.cmd_caret_bytes
+		if px < 0 {
+			px = 0
+		}
+		if px > safe_buf.len {
+			px = safe_buf.len
+		}
+		cursor_x = px + 1
 		if cursor_x > e.screencols {
 			cursor_x = e.screencols
 		}
@@ -715,6 +740,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	ab.write_string('\x1b[?25h')
 
 	print(ab.str())
+	tty_flush()
 }
 
 fn editor_set_status_message(mut e EditorConfig, msg string) {
@@ -764,44 +790,128 @@ fn editor_move_cursor(mut e EditorConfig, key int) {
 
 type PromptCallback = fn (mut EditorConfig, string, int)
 
-fn editor_prompt(mut e EditorConfig, prompt string, callback PromptCallback) ?string {
+fn editor_prompt(mut e EditorConfig, prompt string, bottom_only bool, callback PromptCallback) ?string {
 	mut buf := ''
+	mut cmd_cx := 0
+	pct := prompt.index('%s') or { prompt.len }
+	prefix_len := pct
 	saved_command_mode := e.command_mode
 	saved_command_buffer := e.command_buffer
 	e.command_mode = true
-	fast_bottom_only := prompt == '%s'
 	for {
 		e.command_buffer = prompt.replace('%s', buf)
-		if fast_bottom_only {
+		e.cmd_caret_bytes = prefix_len + cmd_cx
+		if bottom_only {
 			editor_refresh_bottom_line_only(mut e)
 		} else {
 			editor_refresh_screen(mut e)
 		}
 
-		c := editor_read_key()
-		if c == key_del || c == ctrl_key(`h`) || c == int(`\x7f`) {
-			if buf.len > 0 {
-				buf = buf[..buf.len - 1]
+		inp := editor_read_input()
+		if inp.kind == .mouse_ev {
+			continue
+		}
+		c := inp.key
+
+		if !bottom_only {
+			if c == key_arrow_left || c == key_arrow_right || c == key_arrow_up || c == key_arrow_down {
+				callback(mut e, buf, c)
+				continue
 			}
-		} else if c == int(`\x1b`) {
+			if c == key_del || c == ctrl_key(`h`) || c == int(`\x7f`) {
+				if buf.len > 0 {
+					buf = buf[..buf.len - 1]
+				}
+				cmd_cx = buf.len
+				callback(mut e, buf, c)
+				continue
+			}
+			if c == int(`\x1b`) {
+				e.command_mode = saved_command_mode
+				e.command_buffer = saved_command_buffer
+				e.cmd_caret_bytes = 0
+				callback(mut e, buf, c)
+				return none
+			}
+			if c == int(`\r`) {
+				if buf.len != 0 {
+					e.command_mode = saved_command_mode
+					e.command_buffer = saved_command_buffer
+					e.cmd_caret_bytes = 0
+					callback(mut e, buf, c)
+					return buf
+				}
+			}
+			if c >= 32 && c <= 126 {
+				buf += u8(c).ascii_str()
+				cmd_cx = buf.len
+			}
+			callback(mut e, buf, c)
+			continue
+		}
+
+		if c == key_arrow_left {
+			if cmd_cx > 0 {
+				cmd_cx--
+			}
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == key_arrow_right {
+			if cmd_cx < buf.len {
+				cmd_cx++
+			}
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == key_home {
+			cmd_cx = 0
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == key_end {
+			cmd_cx = buf.len
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == key_del {
+			if cmd_cx < buf.len {
+				buf = buf[..cmd_cx] + buf[cmd_cx + 1..]
+			}
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == ctrl_key(`h`) || c == int(`\x7f`) {
+			if cmd_cx > 0 {
+				buf = buf[..cmd_cx - 1] + buf[cmd_cx..]
+				cmd_cx--
+			}
+			callback(mut e, buf, c)
+			continue
+		}
+		if c == int(`\x1b`) {
 			e.command_mode = saved_command_mode
 			e.command_buffer = saved_command_buffer
+			e.cmd_caret_bytes = 0
 			callback(mut e, buf, c)
 			return none
-		} else if c == int(`\r`) {
+		}
+		if c == int(`\r`) {
 			if buf.len != 0 {
 				e.command_mode = saved_command_mode
 				e.command_buffer = saved_command_buffer
+				e.cmd_caret_bytes = 0
 				callback(mut e, buf, c)
 				return buf
 			}
-		} else if c >= 32 && c <= 126 {
-			buf += u8(c).ascii_str()
+		}
+		if c >= 32 && c <= 126 {
+			ch := u8(c).ascii_str()
+			buf = buf[..cmd_cx] + ch + buf[cmd_cx..]
+			cmd_cx++
 		}
 		callback(mut e, buf, c)
 	}
-	e.command_mode = saved_command_mode
-	e.command_buffer = saved_command_buffer
 	return none
 }
 
@@ -856,7 +966,7 @@ fn editor_find(mut e EditorConfig) {
 	saved_rowoff := e.rowoff
 
 	mut state := FindState{}
-	_ = editor_prompt(mut e, 'Search: %s (Use ESC/Arrows/Enter)', fn [mut state] (mut e EditorConfig, q string, k int) {
+	_ = editor_prompt(mut e, 'Search: %s (Use ESC/Arrows/Enter)', false, fn [mut state] (mut e EditorConfig, q string, k int) {
 		editor_find_callback(mut e, mut state, q, k)
 	}) or {
 		e.cx = saved_cx
@@ -868,7 +978,7 @@ fn editor_find(mut e EditorConfig) {
 }
 
 fn editor_command_bar(mut e EditorConfig) bool {
-	input := editor_prompt(mut e, '%s', fn (mut _e EditorConfig, _q string, _k int) {}) or {
+	input := editor_prompt(mut e, ': %s', true, fn (mut _e EditorConfig, _q string, _k int) {}) or {
 		editor_set_status_message(mut e, '')
 		return true
 	}
@@ -881,16 +991,28 @@ fn editor_command_bar(mut e EditorConfig) bool {
 	args := if parts.len > 1 { cmdline[cmd.len + 1..].trim_space() } else { '' }
 
 	match cmd {
-		'q', 'quit' {
+		'q', 'quit', 'exit', 'x' {
 			if e.dirty > 0 {
-				editor_set_status_message(mut e, 'Unsaved changes. Use "quit!" to force.')
+				editor_set_status_message(mut e, 'Unsaved changes. Use quit! or Ctrl-Q to force.')
 				return true
 			}
 			print('\x1b[2J')
 			print('\x1b[H')
 			return false
 		}
-		'q!', 'quit!' {
+		'q!', 'quit!', 'exit!', 'x!' {
+			print('\x1b[2J')
+			print('\x1b[H')
+			return false
+		}
+		'wq' {
+			if args.len > 0 {
+				e.filename = args
+			}
+			editor_save(mut e)
+			if e.dirty > 0 {
+				return true
+			}
 			print('\x1b[2J')
 			print('\x1b[H')
 			return false
@@ -957,7 +1079,7 @@ fn editor_command_bar(mut e EditorConfig) bool {
 		}
 		'help' {
 			editor_set_status_message(mut e,
-				'open/o write/w saveas find goto/g Tab(emmet html) Ctrl-N(complete) mouse(click)')
+				'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1204,36 +1326,43 @@ fn editor_insert_tab_or_spaces(mut e EditorConfig) {
 	}
 }
 
+fn editor_handle_ctrl_q(mut e EditorConfig) bool {
+	if e.dirty == 0 {
+		print('\x1b[2J')
+		print('\x1b[H')
+		return false
+	}
+	e.quit_times_left--
+	if e.quit_times_left > 0 {
+		editor_set_status_message(mut e,
+			'Unsaved changes. Press Ctrl-Q ${e.quit_times_left} more time(s) to force quit.')
+		return true
+	}
+	print('\x1b[2J')
+	print('\x1b[H')
+	return false
+}
+
 fn editor_process_keypress(mut e EditorConfig) bool {
 	inp := editor_read_input()
 	if inp.kind == .mouse_ev {
 		if !inp.mouse_press {
 			return true
 		}
-		bn := inp.mouse_btn % 32
-		if bn != 0 {
+		if !sgr_mouse_is_plain_press(inp.mouse_btn) {
 			return true
 		}
 		editor_click_from_mouse(mut e, inp.mouse_row, inp.mouse_col)
-		e.quit_times_left = quit_times
 		return true
 	}
 	c := inp.key
+	if c == ctrl_key(`q`) {
+		return editor_handle_ctrl_q(mut e)
+	}
 	match c {
 		int(`\r`) {
 			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
-		}
-		ctrl_key(`q`) {
-			if e.dirty > 0 && e.quit_times_left > 0 {
-				editor_set_status_message(mut e,
-					'WARNING!!! File has unsaved changes. Press Ctrl-Q ${e.quit_times_left} more times to quit.')
-				e.quit_times_left--
-				return true
-			}
-			print('\x1b[2J')
-			print('\x1b[H')
-			return false
 		}
 		ctrl_key(`s`) {
 			editor_save(mut e)
@@ -1333,6 +1462,7 @@ fn print_vro_help() {
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
 	println('Ctrl-N cycles buffer word completions. Mouse: left click moves cursor (xterm SGR).')
+	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
 	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting.')
 	println('')
 	println('With a file path, opens that file. Run without arguments to start an empty buffer.')

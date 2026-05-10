@@ -79,7 +79,7 @@ After you publish a release tag (e.g. `v0.3.0`), refresh the tap: `./scripts/pri
 ## Keybindings
 
 - `Ctrl-S`: save file
-- `Ctrl-Q`: quit (requires repeated presses if unsaved)
+- `Ctrl-Q`: quit (if unsaved: three presses to force quit; wheel/mouse no longer resets the counter)
 - `Ctrl-F`: search
 - `Ctrl-E`: command bar
 - `Ctrl-N`: cycle buffer word completions (longer words sharing prefix)
@@ -97,7 +97,8 @@ Press `Ctrl-E`, then type a command:
 - `saveas <path>`
 - `find <text>` (or just `find` for interactive search)
 - `goto <line>` or `g <line>`
-- `quit`, `q`, or `quit!`
+- `quit` / `q` / `exit` / `x` (or `quit!` / `exit!` / `x!` to discard)
+- `wq` — save and quit
 - `help`
 
 ## License
