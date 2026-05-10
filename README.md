@@ -43,6 +43,17 @@ Bundled rules for **V** (`syntax/v.yaml`). Optional overrides live in `~/.config
 
 ## Install
 
+**One-liner (release tarball, needs checksum on asset)**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | bash
+```
+
+Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.0`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+
+**Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
+
 **Prebuilt (GitHub Releases)**
 
 Tarballs and `*.sha256` files are attached to each `v*` tag (see [`.github/workflows/release.yml`](.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, unpack, put `vro` on your `PATH`.
@@ -63,7 +74,7 @@ brew install vro
 
 Wax and Homebrew install the same prebuilt binaries (`url` + `sha256` per platform in the tap formula).
 
-After you publish a release tag (e.g. `v0.2.0`), refresh the tap: `./scripts/print-release-shas.sh v0.2.0`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb` and bump the `url` paths to match that tag. Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
+After you publish a release tag (e.g. `v0.3.0`), refresh the tap: `./scripts/print-release-shas.sh v0.3.0`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb` (replace the placeholder all-zero checksums until then). Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
 
 ## Keybindings
 
@@ -71,8 +82,11 @@ After you publish a release tag (e.g. `v0.2.0`), refresh the tap: `./scripts/pri
 - `Ctrl-Q`: quit (requires repeated presses if unsaved)
 - `Ctrl-F`: search
 - `Ctrl-E`: command bar
+- `Ctrl-N`: cycle buffer word completions (longer words sharing prefix)
+- `Tab`: indent with spaces; on `.html`/`.htm` buffers, expands a lone tag at end-of-line (emmet-lite)
 - `Backspace` / `Delete`: delete character
 - `Enter`: new line
+- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor (`VRO_NO_MOUSE=1` disables)
 
 ## Command Bar
 

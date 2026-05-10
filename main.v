@@ -12,7 +12,7 @@ import time
 #include <unistd.h>
 #include <time.h>
 
-const vro_version = '0.2.0'
+const vro_version = '0.3.0'
 
 const tab_stop = 4
 const quit_times = 3
@@ -97,6 +97,12 @@ mut:
 	hl_carry_rules     int
 	hl_carry_valid     bool
 	hl_carry_dirty_from int = -1 // >=0: suffix rebuild from this row (same row count as cache)
+	// buffer word completion (Ctrl-N)
+	complete_active   bool
+	complete_prefix   string
+	complete_matches  []string
+	complete_idx      int
+	complete_start_cx int
 }
 
 fn die(mut e EditorConfig, message string) {
@@ -141,66 +147,6 @@ fn enable_raw_mode(mut e EditorConfig) {
 
 fn disable_raw_mode(mut e EditorConfig) {
 	_ = C.tcsetattr(0, C.TCSAFLUSH, &e.orig_termios)
-}
-
-fn editor_read_key() int {
-	mut c := [1]u8{}
-	for {
-		nread := C.read(0, &c[0], 1)
-		if nread == 1 {
-			break
-		}
-		if nread == -1 {
-			return -1
-		}
-	}
-
-	if c[0] == `\x1b` {
-		mut seq := [3]u8{}
-		if C.read(0, &seq[0], 1) != 1 {
-			return int(`\x1b`)
-		}
-		if C.read(0, &seq[1], 1) != 1 {
-			return int(`\x1b`)
-		}
-
-		if seq[0] == `[` {
-			if seq[1] >= `0` && seq[1] <= `9` {
-				if C.read(0, &seq[2], 1) != 1 {
-					return int(`\x1b`)
-				}
-				if seq[2] == `~` {
-					match seq[1] {
-						`1`, `7` { return key_home }
-						`3` { return key_del }
-						`4`, `8` { return key_end }
-						`5` { return key_page_up }
-						`6` { return key_page_down }
-						else {}
-					}
-				}
-			} else {
-				match seq[1] {
-					`A` { return key_arrow_up }
-					`B` { return key_arrow_down }
-					`C` { return key_arrow_right }
-					`D` { return key_arrow_left }
-					`H` { return key_home }
-					`F` { return key_end }
-					else {}
-				}
-			}
-		} else if seq[0] == `O` {
-			match seq[1] {
-				`H` { return key_home }
-				`F` { return key_end }
-				else {}
-			}
-		}
-		return int(`\x1b`)
-	}
-
-	return int(c[0])
 }
 
 fn get_cursor_position() !(int, int) {
@@ -685,12 +631,19 @@ fn editor_append_status_line(mut e EditorConfig, mut ab strings.Builder) {
 	}
 
 	mut right := ''
+	filename := if e.filename == '' { '[No Name]' } else { e.filename }
+	modified := if e.dirty > 0 { '*' } else { '' }
+	total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
+	wc := editor_word_count_get(mut e)
+	mut line_no := e.cy + 1
+	if e.cy >= e.rows.len {
+		line_no = total_lines
+	}
+	col_no := e.cx + 1
 	if e.command_mode {
-		filename := if e.filename == '' { '[No Name]' } else { e.filename }
-		modified := if e.dirty > 0 { '*' } else { '' }
-		total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
-		wc := editor_word_count_get(mut e)
-		right = ui_sanitize_display('${filename}${modified} ${wc}w ${e.cy + 1}/${total_lines}')
+		right = ui_sanitize_display('${filename}${modified} ${wc}w L${line_no}/${total_lines} C${col_no}')
+	} else {
+		right = ui_sanitize_display('${filename}${modified} L${line_no}/${total_lines} C${col_no} ${wc}w')
 	}
 
 	mut l := left
@@ -1004,7 +957,7 @@ fn editor_command_bar(mut e EditorConfig) bool {
 		}
 		'help' {
 			editor_set_status_message(mut e,
-				'Commands: open/o, write/w/save, saveas, find//, goto/g, quit/q, quit!')
+				'open/o write/w saveas find goto/g Tab(emmet html) Ctrl-N(complete) mouse(click)')
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1014,10 +967,261 @@ fn editor_command_bar(mut e EditorConfig) bool {
 	return true
 }
 
+fn editor_complete_reset(mut e EditorConfig) {
+	e.complete_active = false
+	e.complete_prefix = ''
+	e.complete_matches = []string{}
+	e.complete_idx = 0
+	e.complete_start_cx = 0
+}
+
+fn is_html_filename(fname string) bool {
+	ext := os.file_ext(fname).to_lower()
+	return ext == '.html' || ext == '.htm'
+}
+
+fn emmet_is_void(tag string) bool {
+	t := tag.to_lower()
+	return match t {
+		'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr' {
+			true
+		}
+		else {
+			false
+		}
+	}
+}
+
+fn is_word_byte(c u8) bool {
+	return (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || (c >= `0` && c <= `9`) || c == `_`
+}
+
+fn indent_inner_spaces(n int) string {
+	if n <= 0 {
+		return ''
+	}
+	mut b := strings.new_builder(n)
+	for _ in 0 .. n {
+		b.write_u8(` `)
+	}
+	return b.str()
+}
+
+fn editor_try_emmet_tab(mut e EditorConfig) bool {
+	if !is_html_filename(e.filename) {
+		return false
+	}
+	if e.cy >= e.rows.len {
+		return false
+	}
+	line := e.rows[e.cy].chars.bytestr()
+	if e.cx != line.len {
+		return false
+	}
+	mut start := e.cx
+	for start > 0 && is_word_byte(line[start - 1]) {
+		start--
+	}
+	if start == e.cx {
+		return false
+	}
+	tag := line[start..e.cx]
+	for i in 0 .. start {
+		ch := line[i]
+		if ch != ` ` && ch != `\t` {
+			return false
+		}
+	}
+	for i in 0 .. tag.len {
+		c := tag[i]
+		is_ok := (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || (c >= `0` && c <= `9`) || c == `-`
+		if !is_ok {
+			return false
+		}
+	}
+	ltag := tag.to_lower()
+	indent_prefix := line[..start]
+	if emmet_is_void(ltag) {
+		newline := '${indent_prefix}<${ltag}>'
+		mut row := e.rows[e.cy]
+		row.chars = newline.bytes()
+		editor_update_row(mut row)
+		e.rows[e.cy] = row
+		e.cx = row.chars.len
+		e.dirty++
+		e.words_dirty = true
+		editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+		editor_complete_reset(mut e)
+		return true
+	}
+	line1 := '${indent_prefix}<${ltag}>'
+	line2 := indent_prefix + indent_inner_spaces(tab_stop)
+	line3 := '${indent_prefix}</${ltag}>'
+	editor_del_row(mut e, e.cy)
+	editor_insert_row(mut e, e.cy, line1)
+	editor_insert_row(mut e, e.cy + 1, line2)
+	editor_insert_row(mut e, e.cy + 2, line3)
+	e.cy = e.cy + 1
+	e.cx = e.rows[e.cy].chars.len
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy - 2)
+	editor_complete_reset(mut e)
+	return true
+}
+
+fn word_bounds_before_cx(line string, cx int) (int, int) {
+	mut end := cx
+	if end > line.len {
+		end = line.len
+	}
+	mut start := end
+	for start > 0 && is_word_byte(line[start - 1]) {
+		start--
+	}
+	return start, end
+}
+
+fn editor_collect_buffer_words(e EditorConfig) []string {
+	mut seen := map[string]bool{}
+	mut out := []string{}
+	for row in e.rows {
+		line := row.chars.bytestr()
+		mut i := 0
+		for i < line.len {
+			if !is_word_byte(line[i]) {
+				i++
+				continue
+			}
+			mut j := i
+			for j < line.len && is_word_byte(line[j]) {
+				j++
+			}
+			w := line[i..j]
+			if w.len > 0 && !seen[w] {
+				seen[w] = true
+				out << w
+			}
+			i = j
+		}
+	}
+	out.sort()
+	return out
+}
+
+fn editor_cycle_word_completion(mut e EditorConfig) {
+	if e.cy >= e.rows.len {
+		return
+	}
+	mut line := e.rows[e.cy].chars.bytestr()
+	if !e.complete_active {
+		start, end := word_bounds_before_cx(line, e.cx)
+		if start == end {
+			editor_set_status_message(mut e, 'No word at cursor')
+			return
+		}
+		prefix := line[start..end]
+		e.complete_prefix = prefix
+		e.complete_start_cx = start
+		e.complete_matches = []string{}
+		allw := editor_collect_buffer_words(e)
+		for w in allw {
+			if w.len > prefix.len && w.starts_with(prefix) {
+				e.complete_matches << w
+			}
+		}
+		if e.complete_matches.len == 0 {
+			editor_set_status_message(mut e, 'No completions')
+			e.complete_active = false
+			return
+		}
+		e.complete_active = true
+		e.complete_idx = -1
+	}
+	e.complete_idx = (e.complete_idx + 1) % e.complete_matches.len
+	repl := e.complete_matches[e.complete_idx]
+	start := e.complete_start_cx
+	old_end := e.cx
+	line = e.rows[e.cy].chars.bytestr()
+	if old_end < start || old_end > line.len {
+		editor_complete_reset(mut e)
+		return
+	}
+	left := line[..start]
+	right := line[old_end..]
+	newl := left + repl + right
+	mut row := e.rows[e.cy]
+	row.chars = newl.bytes()
+	editor_update_row(mut row)
+	e.rows[e.cy] = row
+	e.cx = start + repl.len
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+	editor_set_status_message(mut e, 'complete ${e.complete_idx + 1}/${e.complete_matches.len}')
+}
+
+fn editor_click_from_mouse(mut e EditorConfig, term_row int, term_col int) {
+	if e.command_mode {
+		return
+	}
+	if term_row < 1 || term_row > e.screenrows {
+		return
+	}
+	filerow := e.rowoff + term_row - 1
+	if filerow < 0 {
+		return
+	}
+	if filerow >= e.rows.len {
+		e.cy = e.rows.len
+		e.cx = 0
+		editor_complete_reset(mut e)
+		return
+	}
+	e.cy = filerow
+	mut rx := term_col - 1
+	if rx < 0 {
+		rx = 0
+	}
+	row := e.rows[filerow]
+	e.cx = editor_row_rx_to_cx(row, rx)
+	editor_complete_reset(mut e)
+}
+
+fn editor_insert_tab_or_spaces(mut e EditorConfig) {
+	editor_complete_reset(mut e)
+	if e.cy == e.rows.len {
+		editor_insert_row(mut e, e.rows.len, '')
+	}
+	row := e.rows[e.cy]
+	pos := editor_row_cx_to_rx(row, e.cx)
+	mut n := tab_stop - (pos % tab_stop)
+	if n == 0 {
+		n = tab_stop
+	}
+	for _ in 0 .. n {
+		editor_insert_char(mut e, ` `)
+	}
+}
+
 fn editor_process_keypress(mut e EditorConfig) bool {
-	c := editor_read_key()
+	inp := editor_read_input()
+	if inp.kind == .mouse_ev {
+		if !inp.mouse_press {
+			return true
+		}
+		bn := inp.mouse_btn % 32
+		if bn != 0 {
+			return true
+		}
+		editor_click_from_mouse(mut e, inp.mouse_row, inp.mouse_col)
+		e.quit_times_left = quit_times
+		return true
+	}
+	c := inp.key
 	match c {
 		int(`\r`) {
+			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
 		}
 		ctrl_key(`q`) {
@@ -1042,16 +1246,27 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 				return false
 			}
 		}
+		ctrl_key(`n`) {
+			editor_cycle_word_completion(mut e)
+		}
+		int(`\t`) {
+			if !editor_try_emmet_tab(mut e) {
+				editor_insert_tab_or_spaces(mut e)
+			}
+		}
 		key_home {
+			editor_complete_reset(mut e)
 			e.cx = 0
 		}
 		key_end {
+			editor_complete_reset(mut e)
 			if e.cy < e.rows.len {
 				e.cx = e.rows[e.cy].chars.len
 			}
 		}
 		ctrl_key(`l`), int(`\x1b`) {}
 		key_page_up, key_page_down {
+			editor_complete_reset(mut e)
 			if c == key_page_up {
 				e.cy = e.rowoff
 			} else if c == key_page_down {
@@ -1065,21 +1280,25 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 			}
 		}
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
+			editor_complete_reset(mut e)
 			editor_move_cursor(mut e, c)
 		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
+			editor_complete_reset(mut e)
 			if c == key_del {
 				editor_move_cursor(mut e, key_arrow_right)
 			}
 			editor_del_char(mut e)
 		}
 		ctrl_key(`u`) {
+			editor_complete_reset(mut e)
 			for _ in 0 .. 16 {
 				editor_del_char(mut e)
 			}
 		}
 		else {
 			if c >= 32 && c <= 126 {
+				editor_complete_reset(mut e)
 				editor_insert_char(mut e, u8(c))
 			}
 		}
@@ -1112,6 +1331,10 @@ fn print_vro_help() {
 	println('  -h, -help, --help     Show this help and exit')
 	println('  -version, --version   Print version and exit')
 	println('')
+	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
+	println('Ctrl-N cycles buffer word completions. Mouse: left click moves cursor (xterm SGR).')
+	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting.')
+	println('')
 	println('With a file path, opens that file. Run without arguments to start an empty buffer.')
 }
 
@@ -1141,7 +1364,14 @@ fn main() {
 
 	mut editor := EditorConfig{}
 	enable_raw_mode(mut editor)
+	mouse_on := os.getenv('VRO_NO_MOUSE').len == 0
+	if mouse_on {
+		term_mouse_enable()
+	}
 	defer {
+		if mouse_on {
+			term_mouse_disable()
+		}
 		disable_raw_mode(mut editor)
 	}
 

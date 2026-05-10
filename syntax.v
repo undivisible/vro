@@ -6,6 +6,7 @@ import regex
 import strings
 
 const builtin_v_yaml = $embed_file('syntax/v.yaml').to_string()
+const builtin_html_yaml = $embed_file('syntax/html.yaml').to_string()
 
 fn syntax_user_dir() string {
 	return os.join_path(os.home_dir(), '.config', 'vro', 'syntax')
@@ -541,6 +542,9 @@ fn load_syntax_for_path(path string) ?CompiledSyntax {
 	}
 	if yaml_src.len == 0 && ft == 'v' {
 		yaml_src = builtin_v_yaml
+	}
+	if yaml_src.len == 0 && ft == 'html' {
+		yaml_src = builtin_html_yaml
 	}
 	if yaml_src.len == 0 {
 		return none
