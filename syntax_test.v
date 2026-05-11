@@ -1,7 +1,7 @@
 module main
 
 fn test_vro_version() {
-	assert vro_version == '0.3.3'
+	assert vro_version == '0.3.4'
 }
 
 fn test_syntax_name_for_ext() {
