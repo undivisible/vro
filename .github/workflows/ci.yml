@@ -25,6 +25,14 @@ jobs:
           make
           "${HOME}/vlang/v" version
 
+      - name: Verify vfmt
+        shell: bash
+        run: |
+          set -euo pipefail
+          V="${HOME}/vlang/v"
+          cd "${GITHUB_WORKSPACE}"
+          "${V}" fmt -verify main.v input.v syntax.v syntax_test.v
+
       - name: Check, test, and build vro
         shell: bash
         run: |

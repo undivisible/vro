@@ -1,6 +1,6 @@
 module main
-// SPDX-License-Identifier: MPL-2.0
 
+// SPDX-License-Identifier: MPL-2.0
 import os
 import regex
 import strings
@@ -68,7 +68,7 @@ enum YamlRuleKind {
 }
 
 struct YamlRule {
-	kind YamlRuleKind
+	kind  YamlRuleKind
 	group string
 	pat   string
 	st    string
@@ -85,9 +85,9 @@ mut:
 struct CompiledReg {
 	group string
 mut:
-	st regex.RE
-	en regex.RE
-	sk regex.RE
+	st       regex.RE
+	en       regex.RE
+	sk       regex.RE
 	has_skip bool
 }
 
@@ -97,7 +97,7 @@ enum CompRuleKind {
 }
 
 struct CompiledRule {
-	kind CompRuleKind
+	kind  CompRuleKind
 	group string
 mut:
 	pat CompiledPat
@@ -107,8 +107,8 @@ mut:
 struct CompiledSyntax {
 mut:
 	filename_pat regex.RE
-	has_detect     bool
-	rules          []CompiledRule
+	has_detect   bool
+	rules        []CompiledRule
 }
 
 fn compile_one_re(pat string) !regex.RE {
@@ -139,7 +139,10 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 				out.rules << CompiledRule{
 					kind:  .pat
 					group: r.group
-					pat:   CompiledPat{ group: r.group, re: re }
+					pat:   CompiledPat{
+						group: r.group
+						re:    re
+					}
 				}
 			}
 			.reg {
@@ -156,7 +159,13 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 				out.rules << CompiledRule{
 					kind:  .reg
 					group: r.group
-					reg:   CompiledReg{ group: r.group, st: st, en: en, sk: skre, has_skip: hsk }
+					reg:   CompiledReg{
+						group:    r.group
+						st:       st
+						en:       en
+						sk:       skre
+						has_skip: hsk
+					}
 				}
 			}
 		}
@@ -226,7 +235,11 @@ fn parse_syntax_yaml(src string) ![]YamlRule {
 			rule_line_ind := ind
 			if val.len > 0 && val[0] == `"` {
 				pat := unquote_dquoted(val)!
-				rules << YamlRule{ kind: .pat, group: group, pat: pat }
+				rules << YamlRule{
+					kind:  .pat
+					group: group
+					pat:   pat
+				}
 				i++
 				continue
 			}
@@ -261,7 +274,13 @@ fn parse_syntax_yaml(src string) ![]YamlRule {
 				i++
 			}
 			if st.len > 0 && en.len > 0 {
-				rules << YamlRule{ kind: .reg, group: group, st: st, en: en, sk: sk }
+				rules << YamlRule{
+					kind:  .reg
+					group: group
+					st:    st
+					en:    en
+					sk:    sk
+				}
 			}
 			continue
 		}
@@ -504,23 +523,57 @@ fn syntax_matches_path(syn &CompiledSyntax, path string) bool {
 // Micro-style syntax bundle names (see micro runtime/syntax/*.yaml).
 fn syntax_name_for_ext(ext string) string {
 	return match ext {
-		'.v', '.vv', '.vsh' { 'v' }
-		'.go' { 'go' }
-		'.rs' { 'rust' }
-		'.c', '.h' { 'c' }
-		'.py', '.pyw' { 'python' }
-		'.js', '.mjs', '.cjs' { 'javascript' }
-		'.ts', '.tsx' { 'typescript' }
-		'.json' { 'json' }
-		'.yaml', '.yml' { 'yaml' }
-		'.md', '.mdx' { 'markdown' }
-		'.sh', '.bash', '.zsh' { 'shell' }
-		'.toml' { 'toml' }
-		'.html', '.htm' { 'html' }
-		'.css' { 'css' }
-		'.sql' { 'sql' }
-		'.zig' { 'zig' }
-		'.cc', '.cxx', '.cpp', '.hpp', '.hxx' { 'cpp' }
+		'.v', '.vv', '.vsh' {
+			'v'
+		}
+		'.go' {
+			'go'
+		}
+		'.rs' {
+			'rust'
+		}
+		'.c', '.h' {
+			'c'
+		}
+		'.py', '.pyw' {
+			'python'
+		}
+		'.js', '.mjs', '.cjs' {
+			'javascript'
+		}
+		'.ts', '.tsx' {
+			'typescript'
+		}
+		'.json' {
+			'json'
+		}
+		'.yaml', '.yml' {
+			'yaml'
+		}
+		'.md', '.mdx' {
+			'markdown'
+		}
+		'.sh', '.bash', '.zsh' {
+			'shell'
+		}
+		'.toml' {
+			'toml'
+		}
+		'.html', '.htm' {
+			'html'
+		}
+		'.css' {
+			'css'
+		}
+		'.sql' {
+			'sql'
+		}
+		'.zig' {
+			'zig'
+		}
+		'.cc', '.cxx', '.cpp', '.hpp', '.hxx' {
+			'cpp'
+		}
 		else {
 			if ext.len > 1 && ext[0] == `.` {
 				return ext[1..]

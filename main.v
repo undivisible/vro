@@ -1,6 +1,6 @@
 module main
-// SPDX-License-Identifier: MPL-2.0
 
+// SPDX-License-Identifier: MPL-2.0
 import os
 import term
 import strings
@@ -13,7 +13,7 @@ import time
 #include <time.h>
 #include <stdio.h>
 
-const vro_version = '0.3.2'
+const vro_version = '0.3.3'
 
 const tab_stop = 4
 const quit_times = 3
@@ -76,37 +76,37 @@ mut:
 
 struct EditorConfig {
 mut:
-	cx              int
-	cy              int
-	rx              int
-	rowoff          int
-	coloff          int
-	screenrows      int
-	screencols      int
-	rows            []Erow
-	dirty           int
-	filename        string
-	statusmsg       string
-	statusmsg_time  i64
-	command_mode    bool
-	command_buffer  string
+	cx             int
+	cy             int
+	rx             int
+	rowoff         int
+	coloff         int
+	screenrows     int
+	screencols     int
+	rows           []Erow
+	dirty          int
+	filename       string
+	statusmsg      string
+	statusmsg_time i64
+	command_mode   bool
+	command_buffer string
 	// Byte offset in command_buffer where the caret sits (prompt + cmd text); command_mode only.
 	cmd_caret_bytes int
 	// Sanitized command/status text trimmed by this many bytes so metadata fits on the right.
 	cmd_line_left_skip int
-	word_count      int
-	words_dirty     bool = true
-	quit_times_left int
-	orig_termios    C.termios
+	word_count         int
+	words_dirty        bool = true
+	quit_times_left    int
+	orig_termios       C.termios
 	// syntax highlighting (YAML; see syntax/)
-	hl_syn          CompiledSyntax
-	hl_cache_path   string
-	hl_disable      bool
+	hl_syn        CompiledSyntax
+	hl_cache_path string
+	hl_disable    bool
 	// Per-line region carry entering each row (multiline /* */, raw strings, …).
-	hl_carry_enter     [][]bool
-	hl_carry_lines     int
-	hl_carry_rules     int
-	hl_carry_valid     bool
+	hl_carry_enter      [][]bool
+	hl_carry_lines      int
+	hl_carry_rules      int
+	hl_carry_valid      bool
 	hl_carry_dirty_from int = -1 // >=0: suffix rebuild from this row (same row count as cache)
 	// buffer word completion (Ctrl-N)
 	complete_active   bool
@@ -145,7 +145,7 @@ fn enable_raw_mode(mut e EditorConfig) {
 		raw.c_cc[17] = 0
 	} $else {
 		raw.c_iflag &= ~(C.BRKINT | C.ICRNL | C.INPCK | C.ISTRIP | C.IXON)
-		raw.c_oflag &= ~(C.OPOST)
+		raw.c_oflag &= ~C.OPOST
 		raw.c_cflag |= C.CS8
 		raw.c_lflag &= ~(C.ECHO | C.ICANON | C.IEXTEN | C.ISIG)
 		raw.c_cc[C.VMIN] = 1
@@ -288,7 +288,7 @@ fn editor_insert_row(mut e EditorConfig, at int, s string) {
 		return
 	}
 	mut row := Erow{
-		chars: s.bytes()
+		chars:  s.bytes()
 		render: []
 	}
 	editor_update_row(mut row)
@@ -406,7 +406,7 @@ fn editor_load_buffer_lines(mut e EditorConfig, lines []string) {
 	e.rows = []Erow{}
 	for line in lines {
 		mut row := Erow{
-			chars: line.bytes()
+			chars:  line.bytes()
 			render: []u8{}
 		}
 		editor_update_row(mut row)
@@ -514,8 +514,9 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 	}
 	rl := e.hl_syn.rules.len
 
-	if e.hl_carry_valid && e.hl_carry_dirty_from >= 0 && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == rl
-		&& e.hl_carry_enter.len == e.rows.len && e.hl_carry_dirty_from < e.rows.len {
+	if e.hl_carry_valid && e.hl_carry_dirty_from >= 0 && e.hl_carry_lines == e.rows.len
+		&& e.hl_carry_rules == rl && e.hl_carry_enter.len == e.rows.len
+		&& e.hl_carry_dirty_from < e.rows.len {
 		tf := e.hl_carry_dirty_from
 		mut carry := []bool{len: rl, init: false}
 		for ri in 0 .. rl {
@@ -534,7 +535,8 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 		return
 	}
 
-	if e.hl_carry_valid && e.hl_carry_dirty_from < 0 && e.hl_carry_lines == e.rows.len && e.hl_carry_rules == rl {
+	if e.hl_carry_valid && e.hl_carry_dirty_from < 0 && e.hl_carry_lines == e.rows.len
+		&& e.hl_carry_rules == rl {
 		return
 	}
 
@@ -597,7 +599,8 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 					} else {
 						[]bool{}
 					}
-					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut ab)
+					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut
+						ab)
 				} else {
 					ab.write_string(render[e.coloff..e.coloff + len])
 				}
@@ -829,7 +832,8 @@ fn editor_prompt(mut e EditorConfig, prompt string, bottom_only bool, callback P
 		c := inp.key
 
 		if !bottom_only {
-			if c == key_arrow_left || c == key_arrow_right || c == key_arrow_up || c == key_arrow_down {
+			if c == key_arrow_left || c == key_arrow_right || c == key_arrow_up
+				|| c == key_arrow_down {
 				callback(mut e, buf, c)
 				continue
 			}
@@ -1093,8 +1097,7 @@ fn editor_command_bar(mut e EditorConfig) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1120,7 +1123,8 @@ fn is_html_filename(fname string) bool {
 fn emmet_is_void(tag string) bool {
 	t := tag.to_lower()
 	return match t {
-		'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr' {
+		'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param',
+		'source', 'track', 'wbr' {
 			true
 		}
 		else {
@@ -1171,7 +1175,8 @@ fn editor_try_emmet_tab(mut e EditorConfig) bool {
 	}
 	for i in 0 .. tag.len {
 		c := tag[i]
-		is_ok := (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || (c >= `0` && c <= `9`) || c == `-`
+		is_ok := (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`)
+			|| (c >= `0` && c <= `9`) || c == `-`
 		if !is_ok {
 			return false
 		}
@@ -1350,8 +1355,7 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		plural := if e.quit_times_left == 1 { '' } else { 's' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q press${plural} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q press${plural} forces quit)')
 		return true
 	}
 	print('\x1b[2J')
@@ -1421,7 +1425,11 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 				}
 			}
 			for _ in 0 .. e.screenrows {
-				editor_move_cursor(mut e, if c == key_page_up { key_arrow_up } else { key_arrow_down })
+				editor_move_cursor(mut e, if c == key_page_up {
+					key_arrow_up
+				} else {
+					key_arrow_down
+				})
 			}
 		}
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {

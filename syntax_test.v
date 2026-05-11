@@ -1,7 +1,7 @@
 module main
 
 fn test_vro_version() {
-	assert vro_version == '0.3.2'
+	assert vro_version == '0.3.3'
 }
 
 fn test_syntax_name_for_ext() {
@@ -20,7 +20,7 @@ fn test_is_unsigned_decimal_int_string() {
 }
 
 fn test_hl_carry_multiline_block_comment() {
-	y := "filetype: z\nrules:\n  - comment:\n      start: \"/\\*\"\n      end: \"\\*/\"\n"
+	y := 'filetype: z\nrules:\n  - comment:\n      start: "/\\*"\n      end: "\\*/"\n'
 	mut syn := compile_syntax_from_yaml(y)!
 	mut c := []bool{len: syn.rules.len, init: false}
 	c = hl_carry_row(mut syn, '/* open', c)

@@ -26,6 +26,14 @@ v -gc none -prod -o vro .
 ./vro [file]
 ```
 
+## Test
+
+```sh
+v -gc none test .
+```
+
+Plain `v test .` can fail with a missing `<gc.h>` when Boehm GC development headers are not installed. This repo is checked in CI with `-gc none`, so prefer that for local runs too.
+
 ## CLI (no TTY)
 
 For scripts, CI, and quick checks, `vro` exits before touching the terminal when you pass:
@@ -35,7 +43,7 @@ For scripts, CI, and quick checks, `vro` exits before touching the terminal when
 
 Example: `./vro -version`
 
-**Benchmark** (optional, needs [hyperfine](https://github.com/sharkdp/hyperfine)): `bash scripts/bench-cli.sh` compares `vro -version` vs `micro -version`.
+**Benchmark** (optional, needs [hyperfine](https://github.com/sharkdp/hyperfine)—install with `wax install hyperfine`, your OS package manager, or the upstream instructions): `bash scripts/bench-cli.sh` compares `vro -version` vs `micro -version`.
 
 ## Syntax highlighting
 
@@ -50,7 +58,7 @@ curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | b
 ```
 
 Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
-`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.2`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.3`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
 
 **Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
 
@@ -58,23 +66,23 @@ Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root
 
 Tarballs and `*.sha256` files are attached to each `v*` tag (see [`.github/workflows/release.yml`](.github/workflows/release.yml)). Verify with `shasum -a 256 -c vro-<platform>.sha256`, unpack, put `vro` on your `PATH`.
 
-**Wax**
+**Wax (recommended)**
 
 ```sh
 wax tap undivisible/tap
 wax install vro
 ```
 
-**Homebrew**
+**Homebrew (alternative)**
+
+The [homebrew-tap](https://github.com/undivisible/homebrew-tap) formula tracks the same release tarballs and `sha256` values as Wax; use it if you standardize on `brew` instead of `wax`.
 
 ```sh
 brew tap undivisible/tap https://github.com/undivisible/homebrew-tap
 brew install vro
 ```
 
-Wax and Homebrew install the same prebuilt binaries (`url` + `sha256` per platform in the tap formula).
-
-After you publish a release tag (e.g. `v0.3.2`), refresh the tap: `./scripts/print-release-shas.sh v0.3.2`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or `brew install` will 404.
+After you publish a release tag (e.g. `v0.3.3`), refresh the tap: `./scripts/print-release-shas.sh v0.3.3`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or installs will 404.
 
 ## Keybindings
 

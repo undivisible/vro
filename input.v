@@ -1,4 +1,5 @@
 module main
+
 // SPDX-License-Identifier: MPL-2.0
 
 #include <unistd.h>
@@ -83,51 +84,111 @@ fn parse_csi_body(body string) EditorInput {
 	}
 	if body.len == 1 {
 		match body[0] {
-			`A` { return EditorInput{ kind: .key_ev, key: key_arrow_up } }
-			`B` { return EditorInput{ kind: .key_ev, key: key_arrow_down } }
-			`C` { return EditorInput{ kind: .key_ev, key: key_arrow_right } }
-			`D` { return EditorInput{ kind: .key_ev, key: key_arrow_left } }
-			`H` { return EditorInput{ kind: .key_ev, key: key_home } }
-			`F` { return EditorInput{ kind: .key_ev, key: key_end } }
+			`A` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_arrow_up
+				}
+			}
+			`B` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_arrow_down
+				}
+			}
+			`C` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_arrow_right
+				}
+			}
+			`D` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_arrow_left
+				}
+			}
+			`H` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_home
+				}
+			}
+			`F` {
+				return EditorInput{
+					kind: .key_ev
+					key:  key_end
+				}
+			}
 			else {}
 		}
 	}
 	if body == '1~' || body == '7~' {
-		return EditorInput{ kind: .key_ev, key: key_home }
+		return EditorInput{
+			kind: .key_ev
+			key:  key_home
+		}
 	}
 	if body == '3~' {
-		return EditorInput{ kind: .key_ev, key: key_del }
+		return EditorInput{
+			kind: .key_ev
+			key:  key_del
+		}
 	}
 	if body == '4~' || body == '8~' {
-		return EditorInput{ kind: .key_ev, key: key_end }
+		return EditorInput{
+			kind: .key_ev
+			key:  key_end
+		}
 	}
 	if body == '5~' {
-		return EditorInput{ kind: .key_ev, key: key_page_up }
+		return EditorInput{
+			kind: .key_ev
+			key:  key_page_up
+		}
 	}
 	if body == '6~' {
-		return EditorInput{ kind: .key_ev, key: key_page_down }
+		return EditorInput{
+			kind: .key_ev
+			key:  key_page_down
+		}
 	}
-	return EditorInput{ kind: .key_ev, key: int(`\x1b`) }
+	return EditorInput{
+		kind: .key_ev
+		key:  int(`\x1b`)
+	}
 }
 
 fn editor_read_input() EditorInput {
 	b := tty_read_u8()
 	if b < 0 {
-		return EditorInput{ kind: .key_ev, key: -1 }
+		return EditorInput{
+			kind: .key_ev
+			key:  -1
+		}
 	}
 	if b != 0x1b {
-		return EditorInput{ kind: .key_ev, key: b }
+		return EditorInput{
+			kind: .key_ev
+			key:  b
+		}
 	}
 	b2 := tty_read_u8()
 	if b2 < 0 {
-		return EditorInput{ kind: .key_ev, key: int(`\x1b`) }
+		return EditorInput{
+			kind: .key_ev
+			key:  int(`\x1b`)
+		}
 	}
 	if b2 == `[` {
 		mut body := ''
 		for {
 			c := tty_read_u8()
 			if c < 0 {
-				return EditorInput{ kind: .key_ev, key: int(`\x1b`) }
+				return EditorInput{
+					kind: .key_ev
+					key:  int(`\x1b`)
+				}
 			}
 			body += u8(c).ascii_str()
 			if c >= 0x40 && c <= 0x7e {
@@ -139,16 +200,28 @@ fn editor_read_input() EditorInput {
 	if b2 == `O` {
 		c := tty_read_u8()
 		if c < 0 {
-			return EditorInput{ kind: .key_ev, key: int(`\x1b`) }
+			return EditorInput{
+				kind: .key_ev
+				key:  int(`\x1b`)
+			}
 		}
 		cc := u8(c)
 		if cc == `H` {
-			return EditorInput{ kind: .key_ev, key: key_home }
+			return EditorInput{
+				kind: .key_ev
+				key:  key_home
+			}
 		}
 		if cc == `F` {
-			return EditorInput{ kind: .key_ev, key: key_end }
+			return EditorInput{
+				kind: .key_ev
+				key:  key_end
+			}
 		}
-		return EditorInput{ kind: .key_ev, key: int(`\x1b`) }
+		return EditorInput{
+			kind: .key_ev
+			key:  int(`\x1b`)
+		}
 	}
 	return EditorInput{.key_ev, int(`\x1b`), 0, 0, 0, false}
 }
