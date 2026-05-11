@@ -38,3 +38,33 @@ fn test_ui_sanitize_display() {
 	del := 'x' + u8(0x7f).ascii_str() + 'y'
 	assert ui_sanitize_display(del) == 'x?y'
 }
+
+fn test_ctrl_q_dirty_countdown() {
+	mut e := EditorConfig{
+		dirty:           1
+		quit_times_left: quit_times
+	}
+	assert editor_handle_ctrl_q(mut e)
+	assert e.quit_times_left == 2
+	assert e.statusmsg == 'Unsaved (2 more Ctrl-Q presses forces quit)'
+	assert editor_handle_ctrl_q(mut e)
+	assert e.quit_times_left == 1
+	assert e.statusmsg == 'Unsaved (1 more Ctrl-Q press forces quit)'
+	assert !editor_handle_ctrl_q(mut e)
+}
+
+fn test_footer_caret_stays_in_command_area() {
+	mut e := EditorConfig{
+		command_mode:       true
+		command_buffer:     ': abc'
+		cmd_caret_bytes:    5
+		cmd_line_left_skip: 0
+		screencols:         12
+		rows:               [Erow{}]
+		quit_times_left:    quit_times
+		statusmsg_time:     0
+	}
+	cx := editor_footer_caret_column(mut e)
+	assert cx >= 1
+	assert cx <= e.screencols
+}

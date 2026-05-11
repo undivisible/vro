@@ -444,8 +444,7 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 
 fn editor_save(mut e EditorConfig) {
 	if e.filename == '' {
-		filename := editor_prompt(mut e, '> %s', true,
-			fn (mut _e EditorConfig, _query string, _key int) {}) or {
+		filename := editor_prompt(mut e, '> %s', true, fn (mut _e EditorConfig, _query string, _key int) {}) or {
 			editor_set_status_message(mut e, '')
 			return
 		}
@@ -600,7 +599,8 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 					} else {
 						[]bool{}
 					}
-					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut ab)
+					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut
+						ab)
 				} else {
 					ab.write_string(render[e.coloff..e.coloff + len])
 				}
@@ -727,6 +727,7 @@ fn editor_draw_status_bar(mut e EditorConfig, mut ab strings.Builder) {
 // Fast path: only redraw the bottom overlay line (command bar / status).
 fn editor_refresh_bottom_line_only(mut e EditorConfig) {
 	mut ab := strings.new_builder(256)
+	ab.write_string('\x1b[?25l')
 	ab.write_string('\x1b[${e.screenrows + 1};1H\x1b[K')
 	editor_append_status_line(mut e, mut ab)
 	cursor_x := editor_footer_caret_column(mut e)
@@ -739,6 +740,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	editor_scroll(mut e)
 
 	mut ab := strings.new_builder(4096)
+	ab.write_string('\x1b[?25l')
 	ab.write_string('\x1b[H')
 	editor_draw_rows(mut e, mut ab)
 	editor_draw_status_bar(mut e, mut ab)
@@ -1097,8 +1099,7 @@ fn editor_command_bar(mut e EditorConfig) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1355,9 +1356,8 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	}
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
-		plural := if e.quit_times_left == 1 { '' } else { 's' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q press${plural} forces quit)')
+		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	print('\x1b[2J')
@@ -1381,6 +1381,7 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 	if c == ctrl_key(`q`) {
 		return editor_handle_ctrl_q(mut e)
 	}
+	dirty_before := e.dirty
 	match c {
 		int(`\r`) {
 			editor_complete_reset(mut e)
@@ -1459,7 +1460,9 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 		}
 	}
 
-	e.quit_times_left = quit_times
+	if e.dirty != dirty_before || e.dirty == 0 {
+		e.quit_times_left = quit_times
+	}
 	return true
 }
 
