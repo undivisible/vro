@@ -9,6 +9,7 @@ set -euo pipefail
 
 REPO="${VRO_GITHUB_REPO:-undivisible/vro}"
 INSTALL_DIR="${VRO_INSTALL_DIR:-$HOME/.local/bin}"
+DATA_DIR="${VRO_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/vro}"
 VERSION="${VRO_VERSION:-}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -38,8 +39,11 @@ install_from_repo() {
   ( cd "$root" && v -gc none -prod -o vro . )
   mkdir -p "$INSTALL_DIR"
   cp "${root}/vro" "${INSTALL_DIR}/vro"
+  mkdir -p "$DATA_DIR"
+  cp -R "${root}/syntax" "${DATA_DIR}/syntax"
   chmod +x "${INSTALL_DIR}/vro"
   ok "vro built and installed to ${INSTALL_DIR}/vro"
+  ok "syntax rules installed to ${DATA_DIR}/syntax"
   path_hint
 }
 
@@ -115,6 +119,12 @@ install_from_release() {
   chmod +x "${TMP}/vro"
   mkdir -p "$INSTALL_DIR"
   mv "${TMP}/vro" "${INSTALL_DIR}/vro"
+  if [ -d "${TMP}/syntax" ]; then
+    mkdir -p "$DATA_DIR"
+    rm -rf "${DATA_DIR}/syntax"
+    mv "${TMP}/syntax" "${DATA_DIR}/syntax"
+    ok "syntax rules installed to ${DATA_DIR}/syntax"
+  fi
 
   ok "vro ${VERSION} installed to ${INSTALL_DIR}/vro"
   path_hint

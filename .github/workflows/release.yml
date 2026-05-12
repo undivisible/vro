@@ -58,7 +58,8 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp vro "dist/vro"
-          (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" vro)
+          cp -R syntax "dist/syntax"
+          (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" vro syntax)
           (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.tar.gz" > "vro-${{ matrix.asset_suffix }}.sha256")
 
       - name: Upload artifacts

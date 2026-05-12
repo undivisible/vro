@@ -106,6 +106,7 @@ mut:
 	hl_syn        CompiledSyntax
 	hl_cache_path string
 	hl_disable    bool
+	hl_source     string
 	// Per-line region carry entering each row (multiline /* */, raw strings, …).
 	hl_carry_enter      [][]bool
 	hl_carry_lines      int
@@ -449,6 +450,7 @@ fn editor_find_literal(mut e EditorConfig, query string) bool {
 
 fn editor_ensure_syntax(mut e EditorConfig) {
 	if e.hl_disable {
+		e.hl_source = 'disabled'
 		return
 	}
 	if e.filename == e.hl_cache_path {
@@ -458,12 +460,15 @@ fn editor_ensure_syntax(mut e EditorConfig) {
 	editor_hl_carry_invalidate(mut e)
 	if e.filename.len == 0 {
 		e.hl_syn = CompiledSyntax{}
+		e.hl_source = ''
 		return
 	}
 	if s := load_syntax_for_path(e.filename) {
 		e.hl_syn = s
+		e.hl_source = s.source
 	} else {
 		e.hl_syn = CompiledSyntax{}
+		e.hl_source = 'none'
 	}
 }
 
@@ -1046,7 +1051,19 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 		}
 		'help' {
 			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g quit/exit/x quit! help')
+				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+		}
+		'syntax' {
+			editor_ensure_syntax(mut e)
+			if e.hl_disable {
+				editor_set_status_message(mut e,
+					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+			} else if e.hl_syn.rules.len == 0 {
+				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
+			} else {
+				editor_set_status_message(mut e,
+					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+			}
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1440,6 +1457,9 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
 		return ctrl_key(u8(code_int))
 	}
+	if ev.code == .null && ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
+		return int(`\x1b`)
+	}
 	return match ev.code {
 		.enter {
 			int(`\r`)
@@ -1500,13 +1520,76 @@ fn tui_key_text(ev &tui.Event) string {
 	return ''
 }
 
+fn tui_text_has_control_bytes(text string) bool {
+	for b in text.bytes() {
+		if b < 32 || b == 127 {
+			return true
+		}
+	}
+	return false
+}
+
+fn tui_control_byte_to_editor_key(b u8) int {
+	return match b {
+		9 {
+			int(`\t`)
+		}
+		10, 13 {
+			int(`\r`)
+		}
+		27 {
+			int(`\x1b`)
+		}
+		127 {
+			int(`\x7f`)
+		}
+		1...8, 11...12, 14...26 {
+			ctrl_key(96 | b)
+		}
+		else {
+			0
+		}
+	}
+}
+
+fn editor_process_local_termui_bytes(mut e EditorConfig, text string) bool {
+	mut plain := []u8{}
+	for b in text.bytes() {
+		key := tui_control_byte_to_editor_key(b)
+		if key == 0 {
+			plain << b
+			continue
+		}
+		if plain.len > 0 {
+			if !editor_process_key(mut e, 0, plain.bytestr()) {
+				return false
+			}
+			plain.clear()
+		}
+		if !editor_process_key(mut e, key, '') {
+			return false
+		}
+	}
+	if plain.len > 0 {
+		return editor_process_key(mut e, 0, plain.bytestr())
+	}
+	return true
+}
+
 fn vro_event(ev &tui.Event, x voidptr) {
 	mut app := unsafe { &VroApp(x) }
 	match ev.typ {
 		.key_down {
-			key := tui_key_to_editor_key(ev)
-			text := tui_key_text(ev)
-			if !editor_process_key(mut app.editor, key, text) {
+			mut keep_running := true
+			if !ev.modifiers.has(.ctrl) && !ev.modifiers.has(.alt)
+				&& tui_text_has_control_bytes(ev.utf8) {
+				keep_running = editor_process_local_termui_bytes(mut app.editor, ev.utf8)
+			} else {
+				key := tui_key_to_editor_key(ev)
+				text := tui_key_text(ev)
+				keep_running = editor_process_key(mut app.editor, key, text)
+			}
+			if !keep_running {
 				app.should_quit = true
 			}
 			app.needs_redraw = true
@@ -1527,9 +1610,22 @@ fn vro_event(ev &tui.Event, x voidptr) {
 
 fn vro_init(_ voidptr) {
 	if os.getenv('VRO_NO_MOUSE').len == 0 {
-		print('\x1b[?1003h\x1b[?1006h')
+		print('\x1b[?1003l\x1b[?1000h\x1b[?1006h')
+		flush_stdout()
+	} else {
+		print('\x1b[?1003l\x1b[?1000l\x1b[?1006l')
 		flush_stdout()
 	}
+}
+
+fn vro_cleanup(_ voidptr) {
+	print('\x1b[?1003l\x1b[?1000l\x1b[?1006l\x1b[?25h')
+	flush_stdout()
+}
+
+fn vro_exit(x voidptr) {
+	vro_cleanup(x)
+	exit(0)
 }
 
 fn vro_frame(x voidptr) {
@@ -1537,7 +1633,7 @@ fn vro_frame(x voidptr) {
 	editor_sync_terminal_size(mut app.editor, app.tui.window_width, app.tui.window_height)
 	if !app.needs_redraw {
 		if app.should_quit {
-			exit(0)
+			vro_exit(x)
 		}
 		return
 	}
@@ -1545,7 +1641,7 @@ fn vro_frame(x voidptr) {
 	app.tui.flush()
 	app.needs_redraw = false
 	if app.should_quit {
-		exit(0)
+		vro_exit(x)
 	}
 }
 
@@ -1567,7 +1663,7 @@ fn print_vro_help() {
 	println('Ctrl-N cycles buffer word completions. Mouse: left click moves cursor (xterm SGR).')
 	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
-	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting.')
+	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')
 	println('With a file path, opens that file. Run without arguments to start an empty buffer.')
 }
@@ -1599,7 +1695,10 @@ fn main() {
 
 	mut app := &VroApp{}
 	app.editor.quit_times_left = quit_times
-	app.editor.hl_disable = os.getenv('NO_COLOR').len > 0 || os.getenv('VRO_NO_HL') == '1'
+	app.editor.hl_disable = os.getenv('VRO_NO_HL') == '1'
+	if os.getenv('VRO_FORCE_COLOR') != '1' && os.getenv('NO_COLOR').len > 0 {
+		app.editor.hl_disable = true
+	}
 
 	if args.len >= 2 {
 		editor_open(mut app.editor, args[1]) or {
@@ -1610,12 +1709,13 @@ fn main() {
 	app.tui = tui.init(
 		user_data:            app
 		init_fn:              vro_init
+		cleanup_fn:           vro_cleanup
 		event_fn:             vro_event
 		frame_fn:             vro_frame
 		window_title:         'vro'
 		hide_cursor:          false
 		capture_events:       true
-		frame_rate:           30
+		frame_rate:           120
 		use_alternate_buffer: true
 	)
 	app.tui.run() or {

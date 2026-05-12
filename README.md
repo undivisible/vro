@@ -20,6 +20,8 @@ A small `micro`-inspired terminal text editor written in V.
 v -gc none run . [file]
 ```
 
+`v -gc none .` only compiles the project and writes `./vro`; it does not run the editor.
+
 ## Build
 
 ```sh
@@ -48,7 +50,7 @@ Example: `./vro -version`
 
 ## Syntax highlighting
 
-Bundled rules for **V** (`syntax/v.yaml`). Optional overrides live in `~/.config/vro/syntax/<name>.yaml` where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Region rules continue across newlines (e.g. `/* … */`). Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`.
+Syntax rules load dynamically from YAML files named `<name>.yaml`, where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Lookup order is `VRO_SYNTAX_DIR`, `~/.config/vro/syntax`, local `./syntax`, installed data dirs such as `~/.local/share/vro/syntax`, then embedded V/HTML fallback rules. Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Region rules continue across newlines (e.g. `/* … */`). Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`; `VRO_FORCE_COLOR=1` overrides `NO_COLOR`. Run `:syntax` in the command bar to see which syntax file loaded.
 
 ## Install
 

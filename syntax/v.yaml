@@ -5,9 +5,7 @@ detect:
   filename: "\\.(v|vv|vsh)$"
 
 rules:
-  - comment:
-      start: "//"
-      end: "$"
+  - comment: "//.*"
 
   - comment:
       start: "/\\*"

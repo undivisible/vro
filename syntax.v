@@ -12,6 +12,57 @@ fn syntax_user_dir() string {
 	return os.join_path(os.home_dir(), '.config', 'vro', 'syntax')
 }
 
+fn syntax_data_home_dir() string {
+	xdg := os.getenv('XDG_DATA_HOME')
+	if xdg.len > 0 {
+		return os.join_path(xdg, 'vro', 'syntax')
+	}
+	return os.join_path(os.home_dir(), '.local', 'share', 'vro', 'syntax')
+}
+
+fn syntax_executable_dirs() []string {
+	exe := os.executable()
+	if exe.len == 0 {
+		return []string{}
+	}
+	dir := os.dir(exe)
+	parent := os.dir(dir)
+	return [
+		os.join_path(dir, 'syntax'),
+		os.join_path(parent, 'share', 'vro', 'syntax'),
+		os.join_path(parent, 'share', 'vro'),
+	]
+}
+
+fn syntax_runtime_dirs() []string {
+	mut dirs := []string{}
+	env_dir := os.getenv('VRO_SYNTAX_DIR')
+	if env_dir.len > 0 {
+		for part in env_dir.split(os.path_delimiter) {
+			if part.len > 0 {
+				dirs << part
+			}
+		}
+	}
+	dirs << syntax_user_dir()
+	dirs << os.join_path(os.getwd(), 'syntax')
+	dirs << syntax_data_home_dir()
+	dirs << syntax_executable_dirs()
+	dirs << '/opt/homebrew/share/vro/syntax'
+	dirs << '/usr/local/share/vro/syntax'
+	dirs << '/usr/share/vro/syntax'
+	return dirs
+}
+
+fn load_syntax_yaml_from_dir(dir string, ft string) ?(string, string) {
+	path := os.join_path(dir, '${ft}.yaml')
+	if os.exists(path) {
+		src := os.read_file(path) or { return none }
+		return src, path
+	}
+	return none
+}
+
 fn leading_spaces(line string) int {
 	mut n := 0
 	for n < line.len {
@@ -109,6 +160,7 @@ mut:
 	filename_pat regex.RE
 	has_detect   bool
 	rules        []CompiledRule
+	source       string
 }
 
 fn compile_one_re(pat string) !regex.RE {
@@ -129,19 +181,74 @@ fn compile_maybe_re(pat string) ?regex.RE {
 	return re
 }
 
+fn split_top_level_alternation(pat string) []string {
+	if pat.len < 3 || pat[0] != `(` || pat[pat.len - 1] != `)` {
+		return [pat]
+	}
+	inner := pat[1..pat.len - 1]
+	mut parts := []string{}
+	mut start := 0
+	mut depth := 0
+	mut in_class := false
+	mut escaped := false
+	for i, ch in inner {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == `\\` {
+			escaped = true
+			continue
+		}
+		if in_class {
+			if ch == `]` {
+				in_class = false
+			}
+			continue
+		}
+		match ch {
+			`[` {
+				in_class = true
+			}
+			`(` {
+				depth++
+			}
+			`)` {
+				if depth > 0 {
+					depth--
+				}
+			}
+			`|` {
+				if depth == 0 {
+					parts << inner[start..i]
+					start = i + 1
+				}
+			}
+			else {}
+		}
+	}
+	if parts.len == 0 {
+		return [pat]
+	}
+	parts << inner[start..]
+	return parts
+}
+
 fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 	rules := parse_syntax_yaml(src)!
 	mut out := CompiledSyntax{}
 	for r in rules {
 		match r.kind {
 			.pat {
-				re := compile_one_re(r.pat) or { continue }
-				out.rules << CompiledRule{
-					kind:  .pat
-					group: r.group
-					pat:   CompiledPat{
+				for part in split_top_level_alternation(r.pat) {
+					re := compile_one_re(part) or { continue }
+					out.rules << CompiledRule{
+						kind:  .pat
 						group: r.group
-						re:    re
+						pat:   CompiledPat{
+							group: r.group
+							re:    re
+						}
 					}
 				}
 			}
@@ -510,16 +617,6 @@ fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int
 	}
 }
 
-fn syntax_matches_path(syn &CompiledSyntax, path string) bool {
-	if !syn.has_detect {
-		return true
-	}
-	base := os.base(path)
-	mut re := syn.filename_pat
-	s, e2 := re.find(base)
-	return s >= 0 && e2 > s
-}
-
 // Micro-style syntax bundle names (see micro runtime/syntax/*.yaml).
 fn syntax_name_for_ext(ext string) string {
 	return match ext {
@@ -586,25 +683,29 @@ fn syntax_name_for_ext(ext string) string {
 fn load_syntax_for_path(path string) ?CompiledSyntax {
 	ext := os.file_ext(path)
 	mut yaml_src := ''
+	mut source_name := ''
 	ft := syntax_name_for_ext(ext)
 	if ft.len > 0 {
-		userp := os.join_path(syntax_user_dir(), '${ft}.yaml')
-		if os.exists(userp) {
-			yaml_src = os.read_file(userp) or { '' }
+		for dir in syntax_runtime_dirs() {
+			if src, source := load_syntax_yaml_from_dir(dir, ft) {
+				yaml_src = src
+				source_name = source
+				break
+			}
 		}
 	}
 	if yaml_src.len == 0 && ft == 'v' {
 		yaml_src = builtin_v_yaml
+		source_name = 'embedded:v'
 	}
 	if yaml_src.len == 0 && ft == 'html' {
 		yaml_src = builtin_html_yaml
+		source_name = 'embedded:html'
 	}
 	if yaml_src.len == 0 {
 		return none
 	}
 	mut syn := compile_syntax_from_yaml(yaml_src) or { return none }
-	if !syntax_matches_path(&syn, path) {
-		return none
-	}
+	syn.source = source_name
 	return syn
 }

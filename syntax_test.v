@@ -1,6 +1,8 @@
 module main
 
 import os
+import strings
+import term.ui as tui
 
 fn test_vro_version() {
 	assert vro_version == '0.3.7'
@@ -31,6 +33,81 @@ fn test_hl_carry_multiline_block_comment() {
 	assert c[0] == true
 	c = hl_carry_row(mut syn, '*/ close', c)
 	assert c[0] == false
+}
+
+fn test_bundled_v_syntax_highlights_keywords() {
+	mut syn := load_syntax_for_path('main.v') or { panic('missing v syntax') }
+	mut ab := strings.new_builder(64)
+	hl_draw_line_slice(mut syn, 'fn main() {', 0, 11, []bool{}, mut ab)
+	out := ab.str()
+	assert out.contains('\x1b[35mfn\x1b[0m')
+	assert out.contains('\x1b[37m(')
+}
+
+fn test_bundled_v_line_comments_do_not_carry() {
+	mut syn := load_syntax_for_path('main.v') or { panic('missing v syntax') }
+	carry := []bool{len: syn.rules.len, init: false}
+	next := hl_carry_row(mut syn, '// comment', carry)
+	assert !next.any(it)
+	mut ab := strings.new_builder(64)
+	hl_draw_line_slice(mut syn, 'import os', 0, 9, next, mut ab)
+	out := ab.str()
+	assert out.contains('\x1b[35mimport\x1b[0m')
+	assert !out.contains('\x1b[32mimport')
+}
+
+fn test_dynamic_syntax_dir_loads_unknown_extension() {
+	old := os.getenv('VRO_SYNTAX_DIR')
+	dir := os.join_path(os.temp_dir(), 'vro-dynamic-syntax-test')
+	defer {
+		if old.len > 0 {
+			os.setenv('VRO_SYNTAX_DIR', old, true)
+		} else {
+			os.unsetenv('VRO_SYNTAX_DIR')
+		}
+		os.rmdir_all(dir) or {}
+	}
+	os.rmdir_all(dir) or {}
+	os.mkdir_all(dir)!
+	os.write_file(os.join_path(dir, 'foo.yaml'), 'filetype: foo\nrules:\n  - keyword: "zap"\n')!
+	os.setenv('VRO_SYNTAX_DIR', dir, true)
+	mut syn := load_syntax_for_path('demo.foo') or { panic('missing dynamic syntax') }
+	assert syn.source == os.join_path(dir, 'foo.yaml')
+	mut ab := strings.new_builder(64)
+	hl_draw_line_slice(mut syn, 'zap value', 0, 9, []bool{}, mut ab)
+	assert ab.str().contains('\x1b[35mzap\x1b[0m')
+}
+
+fn test_embedded_v_syntax_reports_source() {
+	old := os.getenv('VRO_SYNTAX_DIR')
+	old_xdg := os.getenv('XDG_DATA_HOME')
+	cwd := os.getwd()
+	tmp := os.join_path(os.temp_dir(), 'vro-empty-syntax-cwd')
+	xdg := os.join_path(os.temp_dir(), 'vro-empty-syntax-xdg')
+	defer {
+		if old.len > 0 {
+			os.setenv('VRO_SYNTAX_DIR', old, true)
+		} else {
+			os.unsetenv('VRO_SYNTAX_DIR')
+		}
+		if old_xdg.len > 0 {
+			os.setenv('XDG_DATA_HOME', old_xdg, true)
+		} else {
+			os.unsetenv('XDG_DATA_HOME')
+		}
+		os.chdir(cwd) or {}
+		os.rmdir_all(tmp) or {}
+		os.rmdir_all(xdg) or {}
+	}
+	os.rmdir_all(tmp) or {}
+	os.rmdir_all(xdg) or {}
+	os.mkdir_all(tmp)!
+	os.mkdir_all(xdg)!
+	os.chdir(tmp)!
+	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'), true)
+	os.setenv('XDG_DATA_HOME', xdg, true)
+	mut syn := load_syntax_for_path('demo.v') or { panic('missing embedded v syntax') }
+	assert syn.source == 'embedded:v'
 }
 
 fn test_ui_sanitize_display() {
@@ -69,6 +146,37 @@ fn test_footer_caret_stays_in_command_area() {
 	cx := editor_footer_caret_column(mut e)
 	assert cx >= 1
 	assert cx <= e.screencols
+}
+
+fn test_escape_cancels_command_bar() {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	assert editor_command_bar(mut e)
+	assert e.command_mode
+	assert editor_process_key(mut e, int(`\x1b`), '')
+	assert !e.command_mode
+	assert e.prompt_kind == .none
+}
+
+fn test_csi_u_escape_maps_to_escape_key() {
+	ev := tui.Event{
+		typ:  .key_down
+		code: .null
+		utf8: '\x1b[27u'
+	}
+	assert tui_key_to_editor_key(ev) == int(`\x1b`)
+}
+
+fn test_local_termui_grouped_bytes_replay_controls() {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	assert editor_process_local_termui_bytes(mut e, 'abc' + u8(5).ascii_str() + u8(27).ascii_str())
+	assert e.rows.len == 1
+	assert e.rows[0].chars.bytestr() == 'abc'
+	assert !e.command_mode
+	assert e.prompt_kind == .none
 }
 
 fn test_open_save_preserves_trailing_newline() {
