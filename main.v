@@ -13,7 +13,7 @@ import time
 #include <time.h>
 #include <stdio.h>
 
-const vro_version = '0.3.4'
+const vro_version = '0.3.5'
 
 const tab_stop = 4
 const quit_times = 3
@@ -86,6 +86,7 @@ mut:
 	rows           []Erow
 	dirty          int
 	filename       string
+	trailing_nl    bool
 	statusmsg      string
 	statusmsg_time i64
 	command_mode   bool
@@ -219,6 +220,8 @@ fn editor_row_cx_to_rx(row Erow, cx int) int {
 		}
 		if row.chars[i] == `\t` {
 			rx += (tab_stop - 1) - (rx % tab_stop)
+		} else if row.chars[i] >= 0x80 && row.chars[i] < 0xc0 {
+			continue
 		}
 		rx++
 	}
@@ -228,6 +231,9 @@ fn editor_row_cx_to_rx(row Erow, cx int) int {
 fn editor_row_rx_to_cx(row Erow, rx int) int {
 	mut cur_rx := 0
 	for cx in 0 .. row.chars.len {
+		if row.chars[cx] >= 0x80 && row.chars[cx] < 0xc0 {
+			continue
+		}
 		if row.chars[cx] == `\t` {
 			cur_rx += (tab_stop - 1) - (cur_rx % tab_stop)
 		}
@@ -341,6 +347,7 @@ fn editor_insert_char(mut e EditorConfig, c u8) {
 	e.rows[e.cy] = row
 	e.cx++
 	e.dirty++
+	e.words_dirty = true
 	if !added_row {
 		editor_hl_carry_mark_dirty_tail(mut e, e.cy)
 	}
@@ -399,12 +406,15 @@ fn editor_rows_to_string(e EditorConfig) string {
 			sb.write_u8(`\n`)
 		}
 	}
+	if e.trailing_nl {
+		sb.write_u8(`\n`)
+	}
 	return sb.str()
 }
 
-fn editor_load_buffer_lines(mut e EditorConfig, lines []string) {
+fn editor_load_buffer_content(mut e EditorConfig, content string) {
 	e.rows = []Erow{}
-	for line in lines {
+	for line in content.split_into_lines() {
 		mut row := Erow{
 			chars:  line.bytes()
 			render: []u8{}
@@ -412,6 +422,7 @@ fn editor_load_buffer_lines(mut e EditorConfig, lines []string) {
 		editor_update_row(mut row)
 		e.rows << row
 	}
+	e.trailing_nl = content.ends_with('\n')
 	e.words_dirty = true
 	editor_hl_carry_invalidate(mut e)
 }
@@ -420,7 +431,7 @@ fn editor_open(mut e EditorConfig, filename string) ! {
 	e.hl_cache_path = ''
 	e.filename = filename
 	content := os.read_file(filename)!
-	editor_load_buffer_lines(mut e, content.split_into_lines())
+	editor_load_buffer_content(mut e, content)
 	e.cx = 0
 	e.cy = 0
 	e.rx = 0
@@ -432,7 +443,7 @@ fn editor_open(mut e EditorConfig, filename string) ! {
 fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 	e.hl_cache_path = ''
 	content := os.read_file(filename)!
-	editor_load_buffer_lines(mut e, content.split_into_lines())
+	editor_load_buffer_content(mut e, content)
 	e.filename = filename
 	e.cx = 0
 	e.cy = 0
@@ -442,23 +453,71 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 	e.dirty = 0
 }
 
-fn editor_save(mut e EditorConfig) {
-	if e.filename == '' {
-		filename := editor_prompt(mut e, '> %s', true, fn (mut _e EditorConfig, _query string, _key int) {}) or {
-			editor_set_status_message(mut e, '')
-			return
-		}
-		e.filename = filename
-	}
-
+fn editor_save_to_path(mut e EditorConfig, filename string) bool {
 	data := editor_rows_to_string(e)
-	os.write_file(e.filename, data) or {
+	os.write_file(filename, data) or {
 		editor_set_status_message(mut e, 'Cannot save! I/O error')
-		return
+		return false
 	}
+	e.filename = filename
 	e.dirty = 0
 	e.quit_times_left = quit_times
 	editor_set_status_message(mut e, '${data.len} bytes written to disk')
+	return true
+}
+
+fn editor_save(mut e EditorConfig) bool {
+	mut filename := e.filename
+	if filename == '' {
+		filename = editor_prompt(mut e, '> %s', true,
+			fn (mut _e EditorConfig, _query string, _key int) {}) or {
+			editor_set_status_message(mut e, '')
+			return false
+		}
+	}
+
+	return editor_save_to_path(mut e, filename)
+}
+
+fn digit_count(n int) int {
+	mut v := n
+	if v < 1 {
+		v = 1
+	}
+	mut digits := 1
+	for v >= 10 {
+		v /= 10
+		digits++
+	}
+	return digits
+}
+
+fn editor_line_gutter_width(e EditorConfig) int {
+	total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
+	return digit_count(total_lines) + 1
+}
+
+fn editor_text_screencols(e EditorConfig) int {
+	mut cols := e.screencols - editor_line_gutter_width(e)
+	if cols < 1 {
+		cols = 1
+	}
+	return cols
+}
+
+fn editor_append_line_gutter(e EditorConfig, mut ab strings.Builder, filerow int) {
+	width := editor_line_gutter_width(e) - 1
+	mut label := ''
+	if filerow < e.rows.len {
+		label = (filerow + 1).str()
+	}
+	for _ in label.len .. width {
+		ab.write_u8(` `)
+	}
+	ab.write_string('\x1b[90m')
+	ab.write_string(label)
+	ab.write_u8(` `)
+	ab.write_string('\x1b[0m')
 }
 
 fn editor_find_literal(mut e EditorConfig, query string) bool {
@@ -571,8 +630,9 @@ fn editor_scroll(mut e EditorConfig) {
 	if e.rx < e.coloff {
 		e.coloff = e.rx
 	}
-	if e.rx >= e.coloff + e.screencols {
-		e.coloff = e.rx - e.screencols + 1
+	text_cols := editor_text_screencols(e)
+	if e.rx >= e.coloff + text_cols {
+		e.coloff = e.rx - text_cols + 1
 	}
 }
 
@@ -581,6 +641,7 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 	editor_ensure_hl_carry(mut e)
 	for y in 0 .. e.screenrows {
 		filerow := y + e.rowoff
+		editor_append_line_gutter(e, mut ab, filerow)
 		if filerow >= e.rows.len {
 			// Keep empty rows visually blank like a plain editor.
 		} else {
@@ -589,8 +650,9 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 			if len < 0 {
 				len = 0
 			}
-			if len > e.screencols {
-				len = e.screencols
+			text_cols := editor_text_screencols(e)
+			if len > text_cols {
+				len = text_cols
 			}
 			if len > 0 {
 				if e.hl_syn.rules.len > 0 && !e.hl_disable {
@@ -599,8 +661,7 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 					} else {
 						[]bool{}
 					}
-					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut
-						ab)
+					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut ab)
 				} else {
 					ab.write_string(render[e.coloff..e.coloff + len])
 				}
@@ -745,7 +806,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	editor_draw_rows(mut e, mut ab)
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
-	mut cursor_x := (e.rx - e.coloff) + 1
+	mut cursor_x := editor_line_gutter_width(e) + (e.rx - e.coloff) + 1
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
 		cursor_x = editor_footer_caret_column(mut e)
@@ -1003,6 +1064,10 @@ fn editor_command_bar(mut e EditorConfig) bool {
 		editor_set_status_message(mut e, '')
 		return true
 	}
+	return editor_run_command(mut e, input)
+}
+
+fn editor_run_command(mut e EditorConfig, input string) bool {
 	cmdline := input.trim_space()
 	if cmdline.len == 0 {
 		return true
@@ -1027,10 +1092,10 @@ fn editor_command_bar(mut e EditorConfig) bool {
 			return false
 		}
 		'wq' {
-			if args.len > 0 {
-				e.filename = args
+			saved := if args.len > 0 { editor_save_to_path(mut e, args) } else { editor_save(mut e) }
+			if !saved {
+				return true
 			}
-			editor_save(mut e)
 			if e.dirty > 0 {
 				return true
 			}
@@ -1040,21 +1105,25 @@ fn editor_command_bar(mut e EditorConfig) bool {
 		}
 		'w', 'write', 'save' {
 			if args.len > 0 {
-				e.filename = args
+				editor_save_to_path(mut e, args)
+			} else {
+				editor_save(mut e)
 			}
-			editor_save(mut e)
 		}
 		'saveas' {
 			if args.len == 0 {
 				editor_set_status_message(mut e, 'Usage: saveas <path>')
 				return true
 			}
-			e.filename = args
-			editor_save(mut e)
+			editor_save_to_path(mut e, args)
 		}
-		'open', 'o' {
+		'open', 'o', 'open!', 'o!' {
 			if args.len == 0 {
 				editor_set_status_message(mut e, 'Usage: open <path>')
+				return true
+			}
+			if e.dirty > 0 && cmd != 'open!' && cmd != 'o!' {
+				editor_set_status_message(mut e, 'Unsaved changes. Use open! to discard.')
 				return true
 			}
 			editor_open_into_buffer(mut e, args) or {
@@ -1099,7 +1168,8 @@ fn editor_command_bar(mut e EditorConfig) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e, 'open/o w/wq write/save saveas find goto/g quit/exit/x quit! help')
+			editor_set_status_message(mut e,
+				'open/o open!/o! w/wq write/save saveas find goto/g quit/exit/x quit! help')
 		}
 		else {
 			editor_set_status_message(mut e, 'Unknown command: ${cmd}')
@@ -1357,7 +1427,8 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e,
+			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	print('\x1b[2J')
@@ -1388,7 +1459,7 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 			editor_insert_newline(mut e)
 		}
 		ctrl_key(`s`) {
-			editor_save(mut e)
+			_ = editor_save(mut e)
 		}
 		ctrl_key(`f`) {
 			editor_find(mut e)
@@ -1492,6 +1563,7 @@ fn print_vro_help() {
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
 	println('Ctrl-N cycles buffer word completions. Mouse: left click moves cursor (xterm SGR).')
+	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
 	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting.')
 	println('')

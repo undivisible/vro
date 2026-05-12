@@ -10,6 +10,7 @@ A small `micro`-inspired terminal text editor written in V.
 - Save with `Ctrl-S`
 - Incremental search with `Ctrl-F`
 - Command bar with `Ctrl-E`
+- Line numbers in the left gutter
 - Dirty-file quit protection with `Ctrl-Q`
 - Micro-style **YAML** syntax highlighting (V regex engine; see `syntax/`)
 
@@ -58,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | b
 ```
 
 Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
-`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.4`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.5`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
 
 **Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
 
@@ -82,7 +83,7 @@ brew tap undivisible/tap https://github.com/undivisible/homebrew-tap
 brew install vro
 ```
 
-After you publish a release tag (e.g. `v0.3.4`), refresh the tap: `./scripts/print-release-shas.sh v0.3.4`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or installs will 404.
+After you publish a release tag (e.g. `v0.3.5`), refresh the tap: `./scripts/print-release-shas.sh v0.3.5`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or installs will 404.
 
 ## Keybindings
 
@@ -100,7 +101,7 @@ After you publish a release tag (e.g. `v0.3.4`), refresh the tap: `./scripts/pri
 
 Press `Ctrl-E`, then type a command:
 
-- `open <path>` or `o <path>`
+- `open <path>` or `o <path>` (`open!` / `o!` discards unsaved changes)
 - `write` / `w` / `save` (or pass a path: `write <path>`)
 - `saveas <path>`
 - `find <text>` (or just `find` for interactive search)

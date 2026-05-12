@@ -1,7 +1,9 @@
 module main
 
+import os
+
 fn test_vro_version() {
-	assert vro_version == '0.3.4'
+	assert vro_version == '0.3.5'
 }
 
 fn test_syntax_name_for_ext() {
@@ -67,4 +69,58 @@ fn test_footer_caret_stays_in_command_area() {
 	cx := editor_footer_caret_column(mut e)
 	assert cx >= 1
 	assert cx <= e.screencols
+}
+
+fn test_open_save_preserves_trailing_newline() {
+	path := os.join_path(os.temp_dir(), 'vro-trailing-newline-test.txt')
+	defer {
+		if os.exists(path) {
+			os.rm(path) or {}
+		}
+	}
+	os.write_file(path, 'alpha\n')!
+	mut e := EditorConfig{}
+	editor_open(mut e, path)!
+	assert editor_rows_to_string(e) == 'alpha\n'
+	assert editor_save_to_path(mut e, path)
+	assert os.read_file(path)! == 'alpha\n'
+}
+
+fn test_save_to_failed_path_keeps_filename() {
+	mut e := EditorConfig{
+		filename: 'original.txt'
+		rows:     [Erow{
+			chars:  'data'.bytes()
+			render: 'data'.bytes()
+		}]
+		dirty:    1
+	}
+	bad_path := os.join_path(os.temp_dir(), 'vro-missing-dir', 'out.txt')
+	assert !editor_save_to_path(mut e, bad_path)
+	assert e.filename == 'original.txt'
+	assert e.dirty == 1
+}
+
+fn test_dirty_open_requires_bang() {
+	path1 := os.join_path(os.temp_dir(), 'vro-open-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-open-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut e := EditorConfig{}
+	editor_open(mut e, path1)!
+	e.dirty = 1
+	assert editor_run_command(mut e, 'open ${path2}')
+	assert e.filename == path1
+	assert e.statusmsg == 'Unsaved changes. Use open! to discard.'
+	assert editor_run_command(mut e, 'open! ${path2}')
+	assert e.filename == path2
+	assert editor_rows_to_string(e) == 'two'
 }
