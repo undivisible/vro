@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '0.3.6'
+const vro_version = '0.3.7'
 
 const tab_stop = 4
 const quit_times = 3
@@ -1525,6 +1525,13 @@ fn vro_event(ev &tui.Event, x voidptr) {
 	}
 }
 
+fn vro_init(_ voidptr) {
+	if os.getenv('VRO_NO_MOUSE').len == 0 {
+		print('\x1b[?1003h\x1b[?1006h')
+		flush_stdout()
+	}
+}
+
 fn vro_frame(x voidptr) {
 	mut app := unsafe { &VroApp(x) }
 	editor_sync_terminal_size(mut app.editor, app.tui.window_width, app.tui.window_height)
@@ -1602,12 +1609,12 @@ fn main() {
 
 	app.tui = tui.init(
 		user_data:            app
+		init_fn:              vro_init
 		event_fn:             vro_event
 		frame_fn:             vro_frame
 		window_title:         'vro'
 		hide_cursor:          false
 		capture_events:       true
-		mouse_enabled:        os.getenv('VRO_NO_MOUSE').len == 0
 		frame_rate:           30
 		use_alternate_buffer: true
 	)
