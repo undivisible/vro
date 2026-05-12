@@ -3,7 +3,7 @@ module main
 import os
 
 fn test_vro_version() {
-	assert vro_version == '0.3.5'
+	assert vro_version == '0.3.6'
 }
 
 fn test_syntax_name_for_ext() {

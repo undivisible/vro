@@ -2,18 +2,11 @@ module main
 
 // SPDX-License-Identifier: MPL-2.0
 import os
-import term
+import term.ui as tui
 import strings
 import time
 
-#flag linux -D_DEFAULT_SOURCE
-#flag darwin -D_DARWIN_C_SOURCE
-#include <termios.h>
-#include <unistd.h>
-#include <time.h>
-#include <stdio.h>
-
-const vro_version = '0.3.5'
+const vro_version = '0.3.6'
 
 const tab_stop = 4
 const quit_times = 3
@@ -28,14 +21,15 @@ const key_end = 1006
 const key_page_up = 1007
 const key_page_down = 1008
 
-fn ctrl_key(c u8) int {
-	return int(c & 0x1f)
+enum EditorPromptKind {
+	none
+	command
+	search
+	save_name
 }
 
-fn tty_flush() {
-	unsafe {
-		C.fflush(C.stdout)
-	}
+fn ctrl_key(c u8) int {
+	return int(c & 0x1f)
 }
 
 // Strip terminal control bytes from strings shown in the status/command line.
@@ -91,6 +85,16 @@ mut:
 	statusmsg_time i64
 	command_mode   bool
 	command_buffer string
+	prompt_kind    EditorPromptKind
+	prompt_prefix  string
+	prompt_text    string
+	prompt_cx      int
+	find_saved_cx  int
+	find_saved_cy  int
+	find_saved_col int
+	find_saved_row int
+	find_last      int = -1
+	find_direction int = 1
 	// Byte offset in command_buffer where the caret sits (prompt + cmd text); command_mode only.
 	cmd_caret_bytes int
 	// Sanitized command/status text trimmed by this many bytes so metadata fits on the right.
@@ -98,7 +102,6 @@ mut:
 	word_count         int
 	words_dirty        bool = true
 	quit_times_left    int
-	orig_termios       C.termios
 	// syntax highlighting (YAML; see syntax/)
 	hl_syn        CompiledSyntax
 	hl_cache_path string
@@ -115,101 +118,6 @@ mut:
 	complete_matches  []string
 	complete_idx      int
 	complete_start_cx int
-}
-
-fn die(mut e EditorConfig, message string) {
-	disable_raw_mode(mut e)
-	eprintln(message)
-	exit(1)
-}
-
-fn enable_raw_mode(mut e EditorConfig) {
-	if C.tcgetattr(0, &e.orig_termios) == -1 {
-		die(mut e, 'tcgetattr failed')
-	}
-
-	mut raw := e.orig_termios
-	// macOS: V's C interop often leaves termios flag macros unusable; use XNU masks.
-	// Linux: keep libc macros (glibc tcflag_t).
-	$if macos {
-		// XNU termios masks; V maps tcflag_t fields as int on Darwin.
-		iflag_clr := 0x00000002 | 0x00000100 | 0x00000010 | 0x00000020 | 0x00000200
-		oflag_clr := 0x00000001
-		cflag_set := 0x00000300
-		lflag_clr := 0x00000008 | 0x00000100 | 0x00000400 | 0x00000080
-		raw.c_iflag &= ~iflag_clr
-		raw.c_oflag &= ~oflag_clr
-		raw.c_cflag |= cflag_set
-		raw.c_lflag &= ~lflag_clr
-		// Darwin: VMIN=16, VTIME=17 — block until one byte (no idle read()→0 spin).
-		raw.c_cc[16] = 1
-		raw.c_cc[17] = 0
-	} $else {
-		raw.c_iflag &= ~(C.BRKINT | C.ICRNL | C.INPCK | C.ISTRIP | C.IXON)
-		raw.c_oflag &= ~C.OPOST
-		raw.c_cflag |= C.CS8
-		raw.c_lflag &= ~(C.ECHO | C.ICANON | C.IEXTEN | C.ISIG)
-		raw.c_cc[C.VMIN] = 1
-		raw.c_cc[C.VTIME] = 0
-	}
-
-	if C.tcsetattr(0, C.TCSAFLUSH, &raw) == -1 {
-		die(mut e, 'tcsetattr failed')
-	}
-}
-
-fn disable_raw_mode(mut e EditorConfig) {
-	_ = C.tcsetattr(0, C.TCSAFLUSH, &e.orig_termios)
-}
-
-fn get_cursor_position() !(int, int) {
-	mut buf := []u8{len: 32, init: 0}
-	print('\x1b[6n')
-	mut i := 0
-	for i < buf.len - 1 {
-		mut c := [1]u8{}
-		if C.read(0, &c[0], 1) != 1 {
-			break
-		}
-		buf[i] = c[0]
-		if c[0] == `R` {
-			break
-		}
-		i++
-	}
-	buf = buf[..i + 1].clone()
-	if buf.len < 2 || buf[0] != `\x1b` || buf[1] != `[` {
-		return error('failed cursor response')
-	}
-	mut row := 0
-	mut col := 0
-	mut j := 2
-	for j < buf.len && buf[j] >= `0` && buf[j] <= `9` {
-		row = row * 10 + int(buf[j] - `0`)
-		j++
-	}
-	if j >= buf.len || buf[j] != `;` {
-		return error('invalid cursor response')
-	}
-	j++
-	for j < buf.len && buf[j] >= `0` && buf[j] <= `9` {
-		col = col * 10 + int(buf[j] - `0`)
-		j++
-	}
-	if row == 0 || col == 0 {
-		return error('invalid cursor position')
-	}
-	return row, col
-}
-
-fn get_window_size() !(int, int) {
-	cols, rows := term.get_terminal_size()
-	if cols <= 0 || rows <= 0 {
-		print('\x1b[999C\x1b[999B')
-		row, col := get_cursor_position()!
-		return row, col
-	}
-	return rows, cols
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -469,11 +377,8 @@ fn editor_save_to_path(mut e EditorConfig, filename string) bool {
 fn editor_save(mut e EditorConfig) bool {
 	mut filename := e.filename
 	if filename == '' {
-		filename = editor_prompt(mut e, '> %s', true,
-			fn (mut _e EditorConfig, _query string, _key int) {}) or {
-			editor_set_status_message(mut e, '')
-			return false
-		}
+		editor_begin_prompt(mut e, .save_name, '> ', '')
+		return false
 	}
 
 	return editor_save_to_path(mut e, filename)
@@ -785,19 +690,7 @@ fn editor_draw_status_bar(mut e EditorConfig, mut ab strings.Builder) {
 	editor_append_status_line(mut e, mut ab)
 }
 
-// Fast path: only redraw the bottom overlay line (command bar / status).
-fn editor_refresh_bottom_line_only(mut e EditorConfig) {
-	mut ab := strings.new_builder(256)
-	ab.write_string('\x1b[?25l')
-	ab.write_string('\x1b[${e.screenrows + 1};1H\x1b[K')
-	editor_append_status_line(mut e, mut ab)
-	cursor_x := editor_footer_caret_column(mut e)
-	ab.write_string('\x1b[${e.screenrows + 1};${cursor_x}H\x1b[?25h')
-	print(ab.str())
-	tty_flush()
-}
-
-fn editor_refresh_screen(mut e EditorConfig) {
+fn editor_build_screen(mut e EditorConfig) string {
 	editor_scroll(mut e)
 
 	mut ab := strings.new_builder(4096)
@@ -819,9 +712,7 @@ fn editor_refresh_screen(mut e EditorConfig) {
 	}
 	ab.write_string('\x1b[${cursor_y};${cursor_x}H')
 	ab.write_string('\x1b[?25h')
-
-	print(ab.str())
-	tty_flush()
+	return ab.str()
 }
 
 fn editor_set_status_message(mut e EditorConfig, msg string) {
@@ -869,160 +760,51 @@ fn editor_move_cursor(mut e EditorConfig, key int) {
 	}
 }
 
-type PromptCallback = fn (mut EditorConfig, string, int)
-
-fn editor_prompt(mut e EditorConfig, prompt string, bottom_only bool, callback PromptCallback) ?string {
-	mut buf := ''
-	mut cmd_cx := 0
-	pct := prompt.index('%s') or { prompt.len }
-	prefix_len := pct
-	saved_command_mode := e.command_mode
-	saved_command_buffer := e.command_buffer
+fn editor_begin_prompt(mut e EditorConfig, kind EditorPromptKind, prefix string, text string) {
 	e.command_mode = true
-	for {
-		e.command_buffer = prompt.replace('%s', buf)
-		e.cmd_caret_bytes = prefix_len + cmd_cx
-		if bottom_only {
-			editor_refresh_bottom_line_only(mut e)
-		} else {
-			editor_refresh_screen(mut e)
-		}
-
-		inp := editor_read_input()
-		if inp.kind == .mouse_ev {
-			continue
-		}
-		c := inp.key
-
-		if !bottom_only {
-			if c == key_arrow_left || c == key_arrow_right || c == key_arrow_up
-				|| c == key_arrow_down {
-				callback(mut e, buf, c)
-				continue
-			}
-			if c == key_del || c == ctrl_key(`h`) || c == int(`\x7f`) {
-				if buf.len > 0 {
-					buf = buf[..buf.len - 1]
-				}
-				cmd_cx = buf.len
-				callback(mut e, buf, c)
-				continue
-			}
-			if c == int(`\x1b`) {
-				e.command_mode = saved_command_mode
-				e.command_buffer = saved_command_buffer
-				e.cmd_caret_bytes = 0
-				callback(mut e, buf, c)
-				return none
-			}
-			if c == int(`\r`) {
-				if buf.len != 0 {
-					e.command_mode = saved_command_mode
-					e.command_buffer = saved_command_buffer
-					e.cmd_caret_bytes = 0
-					callback(mut e, buf, c)
-					return buf
-				}
-			}
-			if c >= 32 && c <= 126 {
-				buf += u8(c).ascii_str()
-				cmd_cx = buf.len
-			}
-			callback(mut e, buf, c)
-			continue
-		}
-
-		if c == key_arrow_left {
-			if cmd_cx > 0 {
-				cmd_cx--
-			}
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == key_arrow_right {
-			if cmd_cx < buf.len {
-				cmd_cx++
-			}
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == key_home {
-			cmd_cx = 0
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == key_end {
-			cmd_cx = buf.len
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == key_del {
-			if cmd_cx < buf.len {
-				buf = buf[..cmd_cx] + buf[cmd_cx + 1..]
-			}
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == ctrl_key(`h`) || c == int(`\x7f`) {
-			if cmd_cx > 0 {
-				buf = buf[..cmd_cx - 1] + buf[cmd_cx..]
-				cmd_cx--
-			}
-			callback(mut e, buf, c)
-			continue
-		}
-		if c == int(`\x1b`) {
-			e.command_mode = saved_command_mode
-			e.command_buffer = saved_command_buffer
-			e.cmd_caret_bytes = 0
-			callback(mut e, buf, c)
-			return none
-		}
-		if c == int(`\r`) {
-			if buf.len != 0 {
-				e.command_mode = saved_command_mode
-				e.command_buffer = saved_command_buffer
-				e.cmd_caret_bytes = 0
-				callback(mut e, buf, c)
-				return buf
-			}
-		}
-		if c >= 32 && c <= 126 {
-			ch := u8(c).ascii_str()
-			buf = buf[..cmd_cx] + ch + buf[cmd_cx..]
-			cmd_cx++
-		}
-		callback(mut e, buf, c)
-	}
-	return none
+	e.prompt_kind = kind
+	e.prompt_prefix = prefix
+	e.prompt_text = text
+	e.prompt_cx = text.len
+	e.command_buffer = prefix + text
+	e.cmd_caret_bytes = prefix.len + e.prompt_cx
 }
 
-struct FindState {
-mut:
-	last_match int = -1
-	direction  int = 1
+fn editor_end_prompt(mut e EditorConfig) {
+	e.command_mode = false
+	e.command_buffer = ''
+	e.prompt_kind = .none
+	e.prompt_prefix = ''
+	e.prompt_text = ''
+	e.prompt_cx = 0
+	e.cmd_caret_bytes = 0
 }
 
-fn editor_find_callback(mut e EditorConfig, mut state FindState, query string, key int) {
+fn editor_sync_prompt_display(mut e EditorConfig) {
+	e.command_buffer = e.prompt_prefix + e.prompt_text
+	e.cmd_caret_bytes = e.prompt_prefix.len + e.prompt_cx
+}
+
+fn editor_find_callback(mut e EditorConfig, query string, key int) {
 	if key == int(`\r`) || key == int(`\x1b`) {
-		state.last_match = -1
-		state.direction = 1
+		e.find_last = -1
+		e.find_direction = 1
 		return
 	} else if key == key_arrow_right || key == key_arrow_down {
-		state.direction = 1
+		e.find_direction = 1
 	} else if key == key_arrow_left || key == key_arrow_up {
-		state.direction = -1
+		e.find_direction = -1
 	} else {
-		state.last_match = -1
-		state.direction = 1
+		e.find_last = -1
+		e.find_direction = 1
 	}
 
-	if state.last_match == -1 {
-		state.direction = 1
+	if e.find_last == -1 {
+		e.find_direction = 1
 	}
-	mut current := state.last_match
+	mut current := e.find_last
 	for _ in 0 .. e.rows.len {
-		current += state.direction
+		current += e.find_direction
 		if current == -1 {
 			current = e.rows.len - 1
 		} else if current == e.rows.len {
@@ -1032,7 +814,7 @@ fn editor_find_callback(mut e EditorConfig, mut state FindState, query string, k
 		row := e.rows[current]
 		idx := row.render.bytestr().index(query) or { -1 }
 		if idx != -1 {
-			state.last_match = current
+			e.find_last = current
 			e.cy = current
 			e.cx = editor_row_rx_to_cx(row, idx)
 			e.rowoff = e.rows.len
@@ -1042,29 +824,124 @@ fn editor_find_callback(mut e EditorConfig, mut state FindState, query string, k
 }
 
 fn editor_find(mut e EditorConfig) {
-	saved_cx := e.cx
-	saved_cy := e.cy
-	saved_coloff := e.coloff
-	saved_rowoff := e.rowoff
-
-	mut state := FindState{}
-	_ = editor_prompt(mut e, 'Search: %s (Use ESC/Arrows/Enter)', false, fn [mut state] (mut e EditorConfig, q string, k int) {
-		editor_find_callback(mut e, mut state, q, k)
-	}) or {
-		e.cx = saved_cx
-		e.cy = saved_cy
-		e.coloff = saved_coloff
-		e.rowoff = saved_rowoff
-		return
-	}
+	e.find_saved_cx = e.cx
+	e.find_saved_cy = e.cy
+	e.find_saved_col = e.coloff
+	e.find_saved_row = e.rowoff
+	e.find_last = -1
+	e.find_direction = 1
+	editor_begin_prompt(mut e, .search, 'Search: ', '')
 }
 
 fn editor_command_bar(mut e EditorConfig) bool {
-	input := editor_prompt(mut e, ': %s', true, fn (mut _e EditorConfig, _q string, _k int) {}) or {
-		editor_set_status_message(mut e, '')
-		return true
+	editor_begin_prompt(mut e, .command, ': ', '')
+	return true
+}
+
+fn editor_cancel_prompt(mut e EditorConfig) {
+	if e.prompt_kind == .search {
+		e.cx = e.find_saved_cx
+		e.cy = e.find_saved_cy
+		e.coloff = e.find_saved_col
+		e.rowoff = e.find_saved_row
 	}
-	return editor_run_command(mut e, input)
+	editor_end_prompt(mut e)
+	editor_set_status_message(mut e, '')
+}
+
+fn editor_submit_prompt(mut e EditorConfig) bool {
+	kind := e.prompt_kind
+	input := e.prompt_text
+	editor_end_prompt(mut e)
+	match kind {
+		.command {
+			return editor_run_command(mut e, input)
+		}
+		.search {
+			return true
+		}
+		.save_name {
+			if input.len > 0 {
+				editor_save_to_path(mut e, input)
+			}
+			return true
+		}
+		.none {
+			return true
+		}
+	}
+}
+
+fn editor_prompt_insert(mut e EditorConfig, text string) {
+	if text.len == 0 {
+		return
+	}
+	e.prompt_text = e.prompt_text[..e.prompt_cx] + text + e.prompt_text[e.prompt_cx..]
+	e.prompt_cx += text.len
+	editor_sync_prompt_display(mut e)
+	if e.prompt_kind == .search {
+		editor_find_callback(mut e, e.prompt_text, 0)
+	}
+}
+
+fn editor_prompt_key(mut e EditorConfig, key int) bool {
+	match key {
+		key_arrow_left {
+			if e.prompt_kind == .search {
+				editor_find_callback(mut e, e.prompt_text, key)
+			} else if e.prompt_cx > 0 {
+				e.prompt_cx--
+			}
+		}
+		key_arrow_right {
+			if e.prompt_kind == .search {
+				editor_find_callback(mut e, e.prompt_text, key)
+			} else if e.prompt_cx < e.prompt_text.len {
+				e.prompt_cx++
+			}
+		}
+		key_arrow_up, key_arrow_down {
+			if e.prompt_kind == .search {
+				editor_find_callback(mut e, e.prompt_text, key)
+			}
+		}
+		key_home {
+			e.prompt_cx = 0
+		}
+		key_end {
+			e.prompt_cx = e.prompt_text.len
+		}
+		key_del {
+			if e.prompt_cx < e.prompt_text.len {
+				e.prompt_text = e.prompt_text[..e.prompt_cx] + e.prompt_text[e.prompt_cx + 1..]
+				if e.prompt_kind == .search {
+					editor_find_callback(mut e, e.prompt_text, key)
+				}
+			}
+		}
+		ctrl_key(`h`), int(`\x7f`) {
+			if e.prompt_cx > 0 {
+				e.prompt_text = e.prompt_text[..e.prompt_cx - 1] + e.prompt_text[e.prompt_cx..]
+				e.prompt_cx--
+				if e.prompt_kind == .search {
+					editor_find_callback(mut e, e.prompt_text, key)
+				}
+			}
+		}
+		int(`\x1b`) {
+			editor_cancel_prompt(mut e)
+			return true
+		}
+		int(`\r`) {
+			if e.prompt_text.len != 0 || e.prompt_kind == .search || e.prompt_kind == .command {
+				return editor_submit_prompt(mut e)
+			}
+		}
+		else {}
+	}
+
+	editor_sync_prompt_display(mut e)
+	return true
 }
 
 fn editor_run_command(mut e EditorConfig, input string) bool {
@@ -1420,8 +1297,6 @@ fn editor_insert_tab_or_spaces(mut e EditorConfig) {
 
 fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	if e.dirty == 0 {
-		print('\x1b[2J')
-		print('\x1b[H')
 		return false
 	}
 	e.quit_times_left--
@@ -1431,24 +1306,23 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
-	print('\x1b[2J')
-	print('\x1b[H')
 	return false
 }
 
-fn editor_process_keypress(mut e EditorConfig) bool {
-	inp := editor_read_input()
-	if inp.kind == .mouse_ev {
-		if !inp.mouse_press {
-			return true
-		}
-		if !sgr_mouse_is_plain_press(inp.mouse_btn) {
-			return true
-		}
-		editor_click_from_mouse(mut e, inp.mouse_row, inp.mouse_col)
-		return true
+fn editor_insert_text(mut e EditorConfig, text string) {
+	for b in text.bytes() {
+		editor_insert_char(mut e, b)
 	}
-	c := inp.key
+}
+
+fn editor_process_key(mut e EditorConfig, c int, text string) bool {
+	if e.command_mode {
+		if text.len > 0 && c != int(`\r`) && c != int(`\x1b`) && c != int(`\x7f`) && c != int(`\t`) {
+			editor_prompt_insert(mut e, text)
+			return true
+		}
+		return editor_prompt_key(mut e, c)
+	}
 	if c == ctrl_key(`q`) {
 		return editor_handle_ctrl_q(mut e)
 	}
@@ -1524,7 +1398,10 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 			}
 		}
 		else {
-			if c >= 32 && c <= 126 {
+			if text.len > 0 {
+				editor_complete_reset(mut e)
+				editor_insert_text(mut e, text)
+			} else if c >= 32 && c <= 126 {
 				editor_complete_reset(mut e)
 				editor_insert_char(mut e, u8(c))
 			}
@@ -1537,14 +1414,132 @@ fn editor_process_keypress(mut e EditorConfig) bool {
 	return true
 }
 
-fn init_editor(mut e EditorConfig) {
-	rows, cols := get_window_size() or {
-		die(mut e, 'Unable to query terminal size')
+struct VroApp {
+mut:
+	tui          &tui.Context = unsafe { nil }
+	editor       EditorConfig
+	needs_redraw bool = true
+	should_quit  bool
+}
+
+fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
+	mut rows := height - 1
+	if rows < 1 {
+		rows = 1
+	}
+	mut cols := width
+	if cols < 1 {
+		cols = 1
+	}
+	e.screenrows = rows
+	e.screencols = cols
+}
+
+fn tui_key_to_editor_key(ev &tui.Event) int {
+	code_int := int(ev.code)
+	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
+		return ctrl_key(u8(code_int))
+	}
+	return match ev.code {
+		.enter {
+			int(`\r`)
+		}
+		.escape {
+			int(`\x1b`)
+		}
+		.tab {
+			int(`\t`)
+		}
+		.backspace {
+			int(`\x7f`)
+		}
+		.delete {
+			key_del
+		}
+		.left {
+			key_arrow_left
+		}
+		.right {
+			key_arrow_right
+		}
+		.up {
+			key_arrow_up
+		}
+		.down {
+			key_arrow_down
+		}
+		.home {
+			key_home
+		}
+		.end {
+			key_end
+		}
+		.page_up {
+			key_page_up
+		}
+		.page_down {
+			key_page_down
+		}
+		else {
+			int(ev.ascii)
+		}
+	}
+}
+
+fn tui_key_text(ev &tui.Event) string {
+	if ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt) {
+		return ''
+	}
+	if ev.utf8.len > 0 && ev.code != .enter && ev.code != .tab && ev.code != .backspace
+		&& ev.code != .delete && ev.code != .escape {
+		return ev.utf8
+	}
+	if ev.ascii >= 32 && ev.ascii <= 126 {
+		return ev.ascii.ascii_str()
+	}
+	return ''
+}
+
+fn vro_event(ev &tui.Event, x voidptr) {
+	mut app := unsafe { &VroApp(x) }
+	match ev.typ {
+		.key_down {
+			key := tui_key_to_editor_key(ev)
+			text := tui_key_text(ev)
+			if !editor_process_key(mut app.editor, key, text) {
+				app.should_quit = true
+			}
+			app.needs_redraw = true
+		}
+		.mouse_down {
+			if ev.button == .left {
+				editor_click_from_mouse(mut app.editor, ev.y, ev.x)
+				app.needs_redraw = true
+			}
+		}
+		.resized {
+			editor_sync_terminal_size(mut app.editor, ev.width, ev.height)
+			app.needs_redraw = true
+		}
+		else {}
+	}
+}
+
+fn vro_frame(x voidptr) {
+	mut app := unsafe { &VroApp(x) }
+	editor_sync_terminal_size(mut app.editor, app.tui.window_width, app.tui.window_height)
+	if !app.needs_redraw {
+		if app.should_quit {
+			exit(0)
+		}
 		return
 	}
-	e.screenrows = rows - 1
-	e.screencols = cols
-	e.quit_times_left = quit_times
+	app.tui.write(editor_build_screen(mut app.editor))
+	app.tui.flush()
+	app.needs_redraw = false
+	if app.should_quit {
+		exit(0)
+	}
 }
 
 fn print_vro_version() {
@@ -1595,33 +1590,29 @@ fn main() {
 		exit(0)
 	}
 
-	mut editor := EditorConfig{}
-	enable_raw_mode(mut editor)
-	mouse_on := os.getenv('VRO_NO_MOUSE').len == 0
-	if mouse_on {
-		term_mouse_enable()
-	}
-	defer {
-		if mouse_on {
-			term_mouse_disable()
-		}
-		disable_raw_mode(mut editor)
-	}
-
-	init_editor(mut editor)
-	editor.hl_disable = os.getenv('NO_COLOR').len > 0 || os.getenv('VRO_NO_HL') == '1'
+	mut app := &VroApp{}
+	app.editor.quit_times_left = quit_times
+	app.editor.hl_disable = os.getenv('NO_COLOR').len > 0 || os.getenv('VRO_NO_HL') == '1'
 
 	if args.len >= 2 {
-		editor_open(mut editor, args[1]) or {
-			editor_set_status_message(mut editor, 'Could not open file: ${err.msg()}')
+		editor_open(mut app.editor, args[1]) or {
+			editor_set_status_message(mut app.editor, 'Could not open file: ${err.msg()}')
 		}
 	}
 
-	editor_refresh_screen(mut editor)
-	for {
-		if !editor_process_keypress(mut editor) {
-			break
-		}
-		editor_refresh_screen(mut editor)
+	app.tui = tui.init(
+		user_data:            app
+		event_fn:             vro_event
+		frame_fn:             vro_frame
+		window_title:         'vro'
+		hide_cursor:          false
+		capture_events:       true
+		mouse_enabled:        os.getenv('VRO_NO_MOUSE').len == 0
+		frame_rate:           30
+		use_alternate_buffer: true
+	)
+	app.tui.run() or {
+		eprintln(err.msg())
+		exit(1)
 	}
 }
