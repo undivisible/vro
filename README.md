@@ -95,9 +95,12 @@ After you publish a release tag (e.g. `v0.3.7`), refresh the tap: `./scripts/pri
 - `Ctrl-E`: command bar
 - `Ctrl-N`: cycle buffer word completions (longer words sharing prefix)
 - `Tab`: indent with spaces; on `.html`/`.htm` buffers, expands a lone tag at end-of-line (emmet-lite)
-- `Backspace` / `Delete`: delete character
+- `Backspace` / `Delete`: delete character, or delete selected text
+- `Ctrl-Delete`: delete next word
+- `Ctrl-W`: delete previous word
+- `Ctrl-U`: delete to the start of the line
 - `Enter`: new line
-- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor (`VRO_NO_MOUSE=1` disables)
+- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor; drag selects text (`VRO_NO_MOUSE=1` disables)
 
 ## Command Bar
 

@@ -20,6 +20,9 @@ const key_home = 1005
 const key_end = 1006
 const key_page_up = 1007
 const key_page_down = 1008
+const key_delete_word_backward = 1009
+const key_delete_word_forward = 1010
+const key_delete_line = 1011
 
 enum EditorPromptKind {
 	none
@@ -66,6 +69,12 @@ struct Erow {
 mut:
 	chars  []u8
 	render []u8
+}
+
+struct CursorPos {
+mut:
+	cy int
+	cx int
 }
 
 struct EditorConfig {
@@ -119,6 +128,10 @@ mut:
 	complete_matches  []string
 	complete_idx      int
 	complete_start_cx int
+	selection_active  bool
+	selecting         bool
+	select_anchor     CursorPos
+	select_cursor     CursorPos
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -245,7 +258,112 @@ fn editor_row_del_char(mut row Erow, at int) {
 	editor_update_row(mut row)
 }
 
+fn editor_clamp_pos(e EditorConfig, pos CursorPos) CursorPos {
+	mut cy := pos.cy
+	if cy < 0 {
+		cy = 0
+	}
+	if cy > e.rows.len {
+		cy = e.rows.len
+	}
+	mut cx := pos.cx
+	row_len := if cy < e.rows.len { e.rows[cy].chars.len } else { 0 }
+	if cx < 0 {
+		cx = 0
+	}
+	if cx > row_len {
+		cx = row_len
+	}
+	return CursorPos{
+		cy: cy
+		cx: cx
+	}
+}
+
+fn cursor_pos_less(a CursorPos, b CursorPos) bool {
+	if a.cy != b.cy {
+		return a.cy < b.cy
+	}
+	return a.cx < b.cx
+}
+
+fn editor_selection_bounds(e EditorConfig) (CursorPos, CursorPos, bool) {
+	if !e.selection_active {
+		return CursorPos{}, CursorPos{}, false
+	}
+	a := editor_clamp_pos(e, e.select_anchor)
+	b := editor_clamp_pos(e, e.select_cursor)
+	if a.cy == b.cy && a.cx == b.cx {
+		return a, b, false
+	}
+	if cursor_pos_less(b, a) {
+		return b, a, true
+	}
+	return a, b, true
+}
+
+fn editor_clear_selection(mut e EditorConfig) {
+	e.selection_active = false
+	e.selecting = false
+	e.select_anchor = CursorPos{}
+	e.select_cursor = CursorPos{}
+}
+
+fn editor_set_cursor(mut e EditorConfig, pos CursorPos) {
+	p := editor_clamp_pos(e, pos)
+	e.cy = p.cy
+	e.cx = p.cx
+}
+
+fn editor_update_selection_cursor(mut e EditorConfig) {
+	e.select_cursor = editor_clamp_pos(e, CursorPos{
+		cy: e.cy
+		cx: e.cx
+	})
+}
+
+fn editor_delete_selection(mut e EditorConfig) bool {
+	start, end, ok := editor_selection_bounds(e)
+	if !ok {
+		return false
+	}
+	editor_set_cursor(mut e, start)
+	if start.cy >= e.rows.len {
+		return false
+	}
+	if start.cy == end.cy {
+		mut row := e.rows[start.cy]
+		row.chars = row.chars[..start.cx].clone()
+		row.chars << e.rows[start.cy].chars[end.cx..]
+		editor_update_row(mut row)
+		e.rows[start.cy] = row
+		e.dirty++
+		e.words_dirty = true
+		editor_hl_carry_mark_dirty_tail(mut e, start.cy)
+		return true
+	}
+	left := e.rows[start.cy].chars[..start.cx].clone()
+	right := if end.cy < e.rows.len { e.rows[end.cy].chars[end.cx..].clone() } else { []u8{} }
+	mut row := e.rows[start.cy]
+	row.chars = left
+	row.chars << right
+	editor_update_row(mut row)
+	e.rows[start.cy] = row
+	for _ in start.cy + 1 .. end.cy + 1 {
+		if start.cy + 1 < e.rows.len {
+			e.rows.delete(start.cy + 1)
+		}
+	}
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_invalidate(mut e)
+	return true
+}
+
 fn editor_insert_char(mut e EditorConfig, c u8) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+	}
 	mut added_row := false
 	if e.cy == e.rows.len {
 		editor_insert_row(mut e, e.rows.len, '')
@@ -263,6 +381,9 @@ fn editor_insert_char(mut e EditorConfig, c u8) {
 }
 
 fn editor_insert_newline(mut e EditorConfig) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+	}
 	if e.cx == 0 {
 		editor_insert_row(mut e, e.cy, '')
 	} else {
@@ -280,6 +401,10 @@ fn editor_insert_newline(mut e EditorConfig) {
 }
 
 fn editor_del_char(mut e EditorConfig) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+		return
+	}
 	if e.cy == e.rows.len {
 		return
 	}
@@ -546,6 +671,44 @@ fn editor_scroll(mut e EditorConfig) {
 	}
 }
 
+fn editor_selection_rx_bounds_for_row(e EditorConfig, filerow int) (int, int, bool) {
+	start, end, ok := editor_selection_bounds(e)
+	if !ok || filerow < start.cy || filerow > end.cy || filerow >= e.rows.len {
+		return 0, 0, false
+	}
+	row := e.rows[filerow]
+	mut start_cx := 0
+	mut end_cx := row.chars.len
+	if filerow == start.cy {
+		start_cx = start.cx
+	}
+	if filerow == end.cy {
+		end_cx = end.cx
+	}
+	if start_cx == end_cx {
+		return 0, 0, false
+	}
+	return editor_row_cx_to_rx(row, start_cx), editor_row_cx_to_rx(row, end_cx), true
+}
+
+fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render string, filerow int, start int, len int, selected bool) {
+	if len <= 0 {
+		return
+	}
+	if selected {
+		ab.write_string('\x1b[7m')
+		ab.write_string(render[start..start + len])
+		ab.write_string('\x1b[0m')
+		return
+	}
+	if e.hl_syn.rules.len > 0 && !e.hl_disable {
+		carry_in := if filerow < e.hl_carry_enter.len { e.hl_carry_enter[filerow] } else { []bool{} }
+		hl_draw_line_slice(mut e.hl_syn, render, start, len, carry_in, mut ab)
+	} else {
+		ab.write_string(render[start..start + len])
+	}
+}
+
 fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 	editor_ensure_syntax(mut e)
 	editor_ensure_hl_carry(mut e)
@@ -565,15 +728,22 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				if e.hl_syn.rules.len > 0 && !e.hl_disable {
-					carry_in := if filerow < e.hl_carry_enter.len {
-						e.hl_carry_enter[filerow]
-					} else {
-						[]bool{}
-					}
-					hl_draw_line_slice(mut e.hl_syn, render, e.coloff, len, carry_in, mut ab)
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
+				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
 				} else {
-					ab.write_string(render[e.coloff..e.coloff + len])
+					visible_start := e.coloff
+					visible_end := e.coloff + len
+					left_end := if sel_start > visible_start { sel_start } else { visible_start }
+					right_start := if sel_end < visible_end { sel_end } else { visible_end }
+					editor_append_line_slice(mut e, mut ab, render, filerow, visible_start,
+						left_end - visible_start, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, left_end,
+						right_start - left_end, true)
+					editor_append_line_slice(mut e, mut ab, render, filerow, right_start,
+						visible_end - right_start, false)
 				}
 			}
 		}
@@ -889,6 +1059,23 @@ fn editor_prompt_insert(mut e EditorConfig, text string) {
 	}
 }
 
+fn prompt_delete_word_backward(mut e EditorConfig) {
+	start := word_start_before_cx(e.prompt_text, e.prompt_cx)
+	if start == e.prompt_cx {
+		return
+	}
+	e.prompt_text = e.prompt_text[..start] + e.prompt_text[e.prompt_cx..]
+	e.prompt_cx = start
+}
+
+fn prompt_delete_word_forward(mut e EditorConfig) {
+	end := word_end_after_cx(e.prompt_text, e.prompt_cx)
+	if end == e.prompt_cx {
+		return
+	}
+	e.prompt_text = e.prompt_text[..e.prompt_cx] + e.prompt_text[end..]
+}
+
 fn editor_prompt_key(mut e EditorConfig, key int) bool {
 	match key {
 		key_arrow_left {
@@ -919,6 +1106,27 @@ fn editor_prompt_key(mut e EditorConfig, key int) bool {
 		key_del {
 			if e.prompt_cx < e.prompt_text.len {
 				e.prompt_text = e.prompt_text[..e.prompt_cx] + e.prompt_text[e.prompt_cx + 1..]
+				if e.prompt_kind == .search {
+					editor_find_callback(mut e, e.prompt_text, key)
+				}
+			}
+		}
+		key_delete_word_backward, ctrl_key(`w`) {
+			prompt_delete_word_backward(mut e)
+			if e.prompt_kind == .search {
+				editor_find_callback(mut e, e.prompt_text, key)
+			}
+		}
+		key_delete_word_forward {
+			prompt_delete_word_forward(mut e)
+			if e.prompt_kind == .search {
+				editor_find_callback(mut e, e.prompt_text, key)
+			}
+		}
+		key_delete_line {
+			if e.prompt_cx > 0 {
+				e.prompt_text = e.prompt_text[e.prompt_cx..]
+				e.prompt_cx = 0
 				if e.prompt_kind == .search {
 					editor_find_callback(mut e, e.prompt_text, key)
 				}
@@ -1050,19 +1258,16 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e,
-					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e,
-					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
 			}
 		}
 		else {
@@ -1190,6 +1395,112 @@ fn word_bounds_before_cx(line string, cx int) (int, int) {
 	return start, end
 }
 
+fn word_start_before_cx(line string, cx int) int {
+	mut start := cx
+	if start > line.len {
+		start = line.len
+	}
+	for start > 0 && !is_word_byte(line[start - 1]) {
+		start--
+	}
+	for start > 0 && is_word_byte(line[start - 1]) {
+		start--
+	}
+	return start
+}
+
+fn word_end_after_cx(line string, cx int) int {
+	mut end := cx
+	if end < 0 {
+		end = 0
+	}
+	if end > line.len {
+		end = line.len
+	}
+	for end < line.len && !is_word_byte(line[end]) {
+		end++
+	}
+	for end < line.len && is_word_byte(line[end]) {
+		end++
+	}
+	return end
+}
+
+fn editor_delete_word_backward(mut e EditorConfig) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+		return
+	}
+	if e.cy >= e.rows.len {
+		editor_del_char(mut e)
+		return
+	}
+	if e.cx == 0 {
+		editor_del_char(mut e)
+		return
+	}
+	line := e.rows[e.cy].chars.bytestr()
+	start := word_start_before_cx(line, e.cx)
+	if start == e.cx {
+		return
+	}
+	mut row := e.rows[e.cy]
+	row.chars = line[..start].bytes()
+	row.chars << line[e.cx..].bytes()
+	editor_update_row(mut row)
+	e.rows[e.cy] = row
+	e.cx = start
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+}
+
+fn editor_delete_word_forward(mut e EditorConfig) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+		return
+	}
+	if e.cy >= e.rows.len {
+		return
+	}
+	line := e.rows[e.cy].chars.bytestr()
+	end := word_end_after_cx(line, e.cx)
+	if end == e.cx {
+		if e.cx == line.len && e.cy + 1 < e.rows.len {
+			editor_move_cursor(mut e, key_arrow_right)
+			editor_del_char(mut e)
+		}
+		return
+	}
+	mut row := e.rows[e.cy]
+	row.chars = line[..e.cx].bytes()
+	row.chars << line[end..].bytes()
+	editor_update_row(mut row)
+	e.rows[e.cy] = row
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+}
+
+fn editor_delete_line_before_cursor(mut e EditorConfig) {
+	if editor_delete_selection(mut e) {
+		editor_clear_selection(mut e)
+		return
+	}
+	if e.cy >= e.rows.len || e.cx == 0 {
+		return
+	}
+	line := e.rows[e.cy].chars.bytestr()
+	mut row := e.rows[e.cy]
+	row.chars = line[e.cx..].bytes()
+	editor_update_row(mut row)
+	e.rows[e.cy] = row
+	e.cx = 0
+	e.dirty++
+	e.words_dirty = true
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+}
+
 fn editor_collect_buffer_words(e EditorConfig) []string {
 	mut seen := map[string]bool{}
 	mut out := []string{}
@@ -1269,6 +1580,28 @@ fn editor_cycle_word_completion(mut e EditorConfig) {
 	editor_set_status_message(mut e, 'complete ${e.complete_idx + 1}/${e.complete_matches.len}')
 }
 
+fn editor_mouse_pos(mut e EditorConfig, term_row int, term_col int) CursorPos {
+	filerow := e.rowoff + term_row - 1
+	if filerow < 0 {
+		return CursorPos{}
+	}
+	if filerow >= e.rows.len {
+		return CursorPos{
+			cy: e.rows.len
+			cx: 0
+		}
+	}
+	mut rx := term_col - editor_line_gutter_width(e) - 1
+	if rx < 0 {
+		rx = 0
+	}
+	row := e.rows[filerow]
+	return CursorPos{
+		cy: filerow
+		cx: editor_row_rx_to_cx(row, rx)
+	}
+}
+
 fn editor_click_from_mouse(mut e EditorConfig, term_row int, term_col int) {
 	if e.command_mode {
 		return
@@ -1276,24 +1609,49 @@ fn editor_click_from_mouse(mut e EditorConfig, term_row int, term_col int) {
 	if term_row < 1 || term_row > e.screenrows {
 		return
 	}
-	filerow := e.rowoff + term_row - 1
-	if filerow < 0 {
-		return
-	}
-	if filerow >= e.rows.len {
-		e.cy = e.rows.len
-		e.cx = 0
-		editor_complete_reset(mut e)
-		return
-	}
-	e.cy = filerow
-	mut rx := term_col - 1
-	if rx < 0 {
-		rx = 0
-	}
-	row := e.rows[filerow]
-	e.cx = editor_row_rx_to_cx(row, rx)
+	editor_set_cursor(mut e, editor_mouse_pos(mut e, term_row, term_col))
+	editor_clear_selection(mut e)
 	editor_complete_reset(mut e)
+}
+
+fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int) {
+	if e.command_mode || term_row < 1 || term_row > e.screenrows {
+		return
+	}
+	pos := editor_mouse_pos(mut e, term_row, term_col)
+	editor_set_cursor(mut e, pos)
+	e.select_anchor = pos
+	e.select_cursor = pos
+	e.selection_active = true
+	e.selecting = true
+	editor_complete_reset(mut e)
+}
+
+fn editor_drag_mouse_selection(mut e EditorConfig, term_row int, term_col int) {
+	if e.command_mode || !e.selecting {
+		return
+	}
+	mut row := term_row
+	if row < 1 {
+		row = 1
+	}
+	if row > e.screenrows {
+		row = e.screenrows
+	}
+	pos := editor_mouse_pos(mut e, row, term_col)
+	editor_set_cursor(mut e, pos)
+	editor_update_selection_cursor(mut e)
+}
+
+fn editor_end_mouse_selection(mut e EditorConfig) {
+	if !e.selecting {
+		return
+	}
+	e.selecting = false
+	_, _, ok := editor_selection_bounds(e)
+	if !ok {
+		editor_clear_selection(mut e)
+	}
 }
 
 fn editor_insert_tab_or_spaces(mut e EditorConfig) {
@@ -1319,8 +1677,7 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	return false
@@ -1370,10 +1727,12 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		}
 		key_home {
 			editor_complete_reset(mut e)
+			editor_clear_selection(mut e)
 			e.cx = 0
 		}
 		key_end {
 			editor_complete_reset(mut e)
+			editor_clear_selection(mut e)
 			if e.cy < e.rows.len {
 				e.cx = e.rows[e.cy].chars.len
 			}
@@ -1381,6 +1740,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		ctrl_key(`l`), int(`\x1b`) {}
 		key_page_up, key_page_down {
 			editor_complete_reset(mut e)
+			editor_clear_selection(mut e)
 			if c == key_page_up {
 				e.cy = e.rowoff
 			} else if c == key_page_down {
@@ -1399,20 +1759,31 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		}
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
 			editor_complete_reset(mut e)
+			editor_clear_selection(mut e)
 			editor_move_cursor(mut e, c)
 		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
 			editor_complete_reset(mut e)
-			if c == key_del {
+			if c == key_del && !e.selection_active {
 				editor_move_cursor(mut e, key_arrow_right)
 			}
 			editor_del_char(mut e)
 		}
+		key_delete_word_backward, ctrl_key(`w`) {
+			editor_complete_reset(mut e)
+			editor_delete_word_backward(mut e)
+		}
+		key_delete_word_forward {
+			editor_complete_reset(mut e)
+			editor_delete_word_forward(mut e)
+		}
+		key_delete_line {
+			editor_complete_reset(mut e)
+			editor_delete_line_before_cursor(mut e)
+		}
 		ctrl_key(`u`) {
 			editor_complete_reset(mut e)
-			for _ in 0 .. 16 {
-				editor_del_char(mut e)
-			}
+			editor_delete_line_before_cursor(mut e)
 		}
 		else {
 			if text.len > 0 {
@@ -1454,6 +1825,12 @@ fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
 
 fn tui_key_to_editor_key(ev &tui.Event) int {
 	code_int := int(ev.code)
+	if ev.modifiers.has(.ctrl) && ev.code == .delete {
+		return key_delete_word_forward
+	}
+	if ev.modifiers.has(.ctrl) && ev.code == .backspace {
+		return key_delete_word_backward
+	}
 	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
 		return ctrl_key(u8(code_int))
 	}
@@ -1596,9 +1973,19 @@ fn vro_event(ev &tui.Event, x voidptr) {
 		}
 		.mouse_down {
 			if ev.button == .left {
-				editor_click_from_mouse(mut app.editor, ev.y, ev.x)
+				editor_begin_mouse_selection(mut app.editor, ev.y, ev.x)
 				app.needs_redraw = true
 			}
+		}
+		.mouse_drag {
+			if ev.button == .left {
+				editor_drag_mouse_selection(mut app.editor, ev.y, ev.x)
+				app.needs_redraw = true
+			}
+		}
+		.mouse_up {
+			editor_end_mouse_selection(mut app.editor)
+			app.needs_redraw = true
 		}
 		.resized {
 			editor_sync_terminal_size(mut app.editor, ev.width, ev.height)
@@ -1610,16 +1997,16 @@ fn vro_event(ev &tui.Event, x voidptr) {
 
 fn vro_init(_ voidptr) {
 	if os.getenv('VRO_NO_MOUSE').len == 0 {
-		print('\x1b[?1003l\x1b[?1000h\x1b[?1006h')
+		print('\x1b[?1003l\x1b[?1000h\x1b[?1002h\x1b[?1006h')
 		flush_stdout()
 	} else {
-		print('\x1b[?1003l\x1b[?1000l\x1b[?1006l')
+		print('\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l')
 		flush_stdout()
 	}
 }
 
 fn vro_cleanup(_ voidptr) {
-	print('\x1b[?1003l\x1b[?1000l\x1b[?1006l\x1b[?25h')
+	print('\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l\x1b[?25h')
 	flush_stdout()
 }
 
@@ -1660,8 +2047,9 @@ fn print_vro_help() {
 	println('  -version, --version   Print version and exit')
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
-	println('Ctrl-N cycles buffer word completions. Mouse: left click moves cursor (xterm SGR).')
+	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; delete/backspace removes it.')
 	println('Line numbers are shown in the left gutter.')
+	println('Ctrl-Delete deletes the next word; Ctrl-W deletes the previous word; Ctrl-U deletes to line start.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
 	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')

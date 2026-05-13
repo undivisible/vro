@@ -104,7 +104,8 @@ fn test_embedded_v_syntax_reports_source() {
 	os.mkdir_all(tmp)!
 	os.mkdir_all(xdg)!
 	os.chdir(tmp)!
-	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'), true)
+	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'),
+		true)
 	os.setenv('XDG_DATA_HOME', xdg, true)
 	mut syn := load_syntax_for_path('demo.v') or { panic('missing embedded v syntax') }
 	assert syn.source == 'embedded:v'
@@ -177,6 +178,81 @@ fn test_local_termui_grouped_bytes_replay_controls() {
 	assert e.rows[0].chars.bytestr() == 'abc'
 	assert !e.command_mode
 	assert e.prompt_kind == .none
+}
+
+fn test_mouse_drag_selection_deletes_selected_text() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2)
+	editor_drag_mouse_selection(mut e, 1, gutter + 6)
+	editor_end_mouse_selection(mut e)
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'a beta'
+	assert !e.selection_active
+}
+
+fn test_ctrl_delete_maps_and_deletes_next_word() {
+	mut row := Erow{
+		chars:  'alpha beta gamma'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              6
+		quit_times_left: quit_times
+	}
+	ev := tui.Event{
+		typ:       .key_down
+		code:      .delete
+		modifiers: .ctrl
+	}
+	assert tui_key_to_editor_key(ev) == key_delete_word_forward
+	assert editor_process_key(mut e, key_delete_word_forward, '')
+	assert e.rows[0].chars.bytestr() == 'alpha  gamma'
+}
+
+fn test_ctrl_w_deletes_previous_word() {
+	mut row := Erow{
+		chars:  'alpha beta gamma'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              10
+		quit_times_left: quit_times
+	}
+	assert editor_process_key(mut e, ctrl_key(`w`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha  gamma'
+	assert e.cx == 6
+}
+
+fn test_ctrl_u_deletes_to_line_start() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              6
+		quit_times_left: quit_times
+	}
+	assert editor_process_key(mut e, ctrl_key(`u`), '')
+	assert e.rows[0].chars.bytestr() == 'beta'
+	assert e.cx == 0
 }
 
 fn test_open_save_preserves_trailing_newline() {
