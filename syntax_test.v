@@ -104,8 +104,7 @@ fn test_embedded_v_syntax_reports_source() {
 	os.mkdir_all(tmp)!
 	os.mkdir_all(xdg)!
 	os.chdir(tmp)!
-	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'),
-		true)
+	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'), true)
 	os.setenv('XDG_DATA_HOME', xdg, true)
 	mut syn := load_syntax_for_path('demo.v') or { panic('missing embedded v syntax') }
 	assert syn.source == 'embedded:v'
