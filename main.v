@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '0.3.8'
+const vro_version = '1.0.0'
 
 const tab_stop = 4
 const quit_times = 3
