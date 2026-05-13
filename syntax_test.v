@@ -180,6 +180,56 @@ fn test_local_termui_grouped_bytes_replay_controls() {
 	assert e.prompt_kind == .none
 }
 
+fn test_local_termui_arrow_escape_does_not_insert_text() {
+	mut row := Erow{
+		chars:  'ab'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              1
+		quit_times_left: quit_times
+	}
+	assert editor_process_local_termui_bytes(mut e, '\x1b[D')
+	assert e.cx == 0
+	assert e.rows[0].chars.bytestr() == 'ab'
+}
+
+fn test_local_termui_shift_arrow_escape_selects() {
+	mut row := Erow{
+		chars:  'abcd'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              1
+		quit_times_left: quit_times
+	}
+	assert editor_process_local_termui_bytes(mut e, '\x1b[1;2C')
+	assert e.cx == 2
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'acd'
+}
+
+fn test_local_termui_option_delete_deletes_previous_word() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              10
+		quit_times_left: quit_times
+	}
+	assert editor_process_local_termui_bytes(mut e, '\x1b\x7f')
+	assert e.rows[0].chars.bytestr() == 'alpha '
+	assert e.cx == 6
+}
+
 fn test_mouse_drag_selection_deletes_selected_text() {
 	mut row := Erow{
 		chars:  'alpha beta'.bytes()
@@ -308,7 +358,47 @@ fn test_mouse_small_jitter_acts_like_click() {
 	}
 	gutter := editor_line_gutter_width(e)
 	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
+	editor_end_mouse_selection(mut e)
+	assert e.cx == 1
+	assert !e.selection_active
+}
+
+fn test_mouse_can_select_one_character() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
 	editor_drag_mouse_selection(mut e, 1, gutter + 3, false)
+	editor_end_mouse_selection(mut e)
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'apha beta'
+}
+
+fn test_mouse_same_cell_acts_like_click() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
+	editor_drag_mouse_selection(mut e, 1, gutter + 2, false)
 	editor_end_mouse_selection(mut e)
 	assert e.cx == 1
 	assert !e.selection_active

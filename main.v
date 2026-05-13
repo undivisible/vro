@@ -1674,7 +1674,7 @@ fn editor_mouse_drag_far_enough(e EditorConfig, term_row int, term_col int) bool
 	} else {
 		e.mouse_down_col - term_col
 	}
-	return dy >= 1 || dx >= 2
+	return dy >= 1 || dx >= 1
 }
 
 fn editor_drag_mouse_selection(mut e EditorConfig, term_row int, term_col int, force bool) {
@@ -1943,10 +1943,10 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 			else {}
 		}
 	}
-	if ev.modifiers.has(.ctrl) && ev.code == .delete {
+	if (ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt)) && ev.code == .delete {
 		return key_delete_word_forward
 	}
-	if ev.modifiers.has(.ctrl) && ev.code == .backspace {
+	if (ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt)) && ev.code == .backspace {
 		return key_delete_word_backward
 	}
 	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
@@ -2047,12 +2047,84 @@ fn tui_control_byte_to_editor_key(b u8) int {
 	}
 }
 
+fn tui_csi_sequence_to_editor_key(seq string) int {
+	return match seq {
+		'\x1b[A', '\x1bOA' { key_arrow_up }
+		'\x1b[B', '\x1bOB' { key_arrow_down }
+		'\x1b[C', '\x1bOC' { key_arrow_right }
+		'\x1b[D', '\x1bOD' { key_arrow_left }
+		'\x1b[H', '\x1bOH', '\x1b[1~', '\x1b[7~' { key_home }
+		'\x1b[F', '\x1bOF', '\x1b[4~', '\x1b[8~' { key_end }
+		'\x1b[3~' { key_del }
+		'\x1b[5~' { key_page_up }
+		'\x1b[6~' { key_page_down }
+		'\x1b[1;2A' { key_shift_arrow_up }
+		'\x1b[1;2B' { key_shift_arrow_down }
+		'\x1b[1;2C' { key_shift_arrow_right }
+		'\x1b[1;2D' { key_shift_arrow_left }
+		'\x1b[3;5~' { key_delete_word_forward }
+		'\x1b\x7f' { key_delete_word_backward }
+		else { 0 }
+	}
+}
+
+fn tui_escape_sequence_end(text string, start int) int {
+	if start + 1 >= text.len || text[start] != 0x1b {
+		return start + 1
+	}
+	next := text[start + 1]
+	if next == `[` {
+		mut i := start + 2
+		for i < text.len {
+			b := text[i]
+			if (b >= `A` && b <= `Z`) || (b >= `a` && b <= `z`) || b == `~` {
+				return i + 1
+			}
+			i++
+		}
+		return text.len
+	}
+	if next == `O` {
+		if start + 2 < text.len {
+			return start + 3
+		}
+		return text.len
+	}
+	if next == 0x7f {
+		return start + 2
+	}
+	return start + 1
+}
+
 fn editor_process_local_termui_bytes(mut e EditorConfig, text string) bool {
 	mut plain := []u8{}
-	for b in text.bytes() {
+	mut i := 0
+	for i < text.len {
+		b := text[i]
+		if b == 0x1b {
+			end := tui_escape_sequence_end(text, i)
+			if end > i + 1 {
+				seq := text[i..end]
+				key := tui_csi_sequence_to_editor_key(seq)
+				if key != 0 {
+					if plain.len > 0 {
+						if !editor_process_key(mut e, 0, plain.bytestr()) {
+							return false
+						}
+						plain.clear()
+					}
+					if !editor_process_key(mut e, key, '') {
+						return false
+					}
+					i = end
+					continue
+				}
+			}
+		}
 		key := tui_control_byte_to_editor_key(b)
 		if key == 0 {
 			plain << b
+			i++
 			continue
 		}
 		if plain.len > 0 {
@@ -2064,6 +2136,7 @@ fn editor_process_local_termui_bytes(mut e EditorConfig, text string) bool {
 		if !editor_process_key(mut e, key, '') {
 			return false
 		}
+		i++
 	}
 	if plain.len > 0 {
 		return editor_process_key(mut e, 0, plain.bytestr())
@@ -2177,7 +2250,7 @@ fn print_vro_help() {
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
 	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; delete/backspace removes it.')
 	println('Line numbers are shown in the left gutter.')
-	println('Ctrl-Delete deletes next word; Ctrl-W deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
+	println('Ctrl-Delete deletes next word; Ctrl-W/Option-Delete deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
 	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')
