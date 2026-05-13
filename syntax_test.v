@@ -193,8 +193,8 @@ fn test_mouse_drag_selection_deletes_selected_text() {
 		quit_times_left: quit_times
 	}
 	gutter := editor_line_gutter_width(e)
-	editor_begin_mouse_selection(mut e, 1, gutter + 2)
-	editor_drag_mouse_selection(mut e, 1, gutter + 6)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
+	editor_drag_mouse_selection(mut e, 1, gutter + 6, false)
 	editor_end_mouse_selection(mut e)
 	assert e.selection_active
 	assert editor_process_key(mut e, int(`\x7f`), '')
@@ -253,6 +253,134 @@ fn test_ctrl_u_deletes_to_line_start() {
 	assert editor_process_key(mut e, ctrl_key(`u`), '')
 	assert e.rows[0].chars.bytestr() == 'beta'
 	assert e.cx == 0
+}
+
+fn test_mouse_click_respects_horizontal_scroll() {
+	mut row := Erow{
+		chars:  '0123456789abcdef'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      12
+		coloff:          5
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_click_from_mouse(mut e, 1, gutter + 3)
+	assert e.cx == 7
+}
+
+fn test_mouse_up_updates_selection_endpoint() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
+	editor_drag_mouse_selection(mut e, 1, gutter + 4, false)
+	editor_drag_mouse_selection(mut e, 1, gutter + 8, true)
+	editor_end_mouse_selection(mut e)
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'aeta'
+}
+
+fn test_mouse_small_jitter_acts_like_click() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 2, false)
+	editor_drag_mouse_selection(mut e, 1, gutter + 3, false)
+	editor_end_mouse_selection(mut e)
+	assert e.cx == 1
+	assert !e.selection_active
+}
+
+fn test_shift_mouse_extends_from_cursor() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              2
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection(mut e, 1, gutter + 7, true)
+	editor_drag_mouse_selection(mut e, 1, gutter + 8, true)
+	editor_end_mouse_selection(mut e)
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'aleta'
+}
+
+fn test_shift_arrow_extends_selection_and_delete_removes_it() {
+	mut row := Erow{
+		chars:  'abcd'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              1
+		quit_times_left: quit_times
+	}
+	ev := tui.Event{
+		typ:       .key_down
+		code:      .right
+		modifiers: .shift
+	}
+	assert tui_key_to_editor_key(ev) == key_shift_arrow_right
+	assert editor_process_key(mut e, key_shift_arrow_right, '')
+	assert editor_process_key(mut e, key_shift_arrow_right, '')
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'ad'
+}
+
+fn test_mouse_wheel_scrolls_without_dirtying() {
+	mut rows := []Erow{}
+	for i in 0 .. 8 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	editor_scroll_mouse(mut e, .down)
+	assert e.cy == 1
+	assert e.dirty == 0
+	editor_scroll_mouse(mut e, .up)
+	assert e.cy == 0
+	assert e.dirty == 0
 }
 
 fn test_open_save_preserves_trailing_newline() {

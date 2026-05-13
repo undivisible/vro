@@ -99,8 +99,9 @@ After you publish a release tag (e.g. `v0.3.7`), refresh the tap: `./scripts/pri
 - `Ctrl-Delete`: delete next word
 - `Ctrl-W`: delete previous word
 - `Ctrl-U`: delete to the start of the line
+- `Shift-Arrows`: extend selection when the terminal sends shifted arrow keys
 - `Enter`: new line
-- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor; drag selects text (`VRO_NO_MOUSE=1` disables)
+- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor; drag selects text; wheel scrolls (`VRO_NO_MOUSE=1` disables)
 
 ## Command Bar
 

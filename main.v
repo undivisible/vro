@@ -23,6 +23,10 @@ const key_page_down = 1008
 const key_delete_word_backward = 1009
 const key_delete_word_forward = 1010
 const key_delete_line = 1011
+const key_shift_arrow_left = 1012
+const key_shift_arrow_right = 1013
+const key_shift_arrow_up = 1014
+const key_shift_arrow_down = 1015
 
 enum EditorPromptKind {
 	none
@@ -132,6 +136,10 @@ mut:
 	selecting         bool
 	select_anchor     CursorPos
 	select_cursor     CursorPos
+	mouse_down_pos    CursorPos
+	mouse_down_row    int
+	mouse_down_col    int
+	mouse_pending     bool
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -307,6 +315,10 @@ fn editor_clear_selection(mut e EditorConfig) {
 	e.selecting = false
 	e.select_anchor = CursorPos{}
 	e.select_cursor = CursorPos{}
+	e.mouse_down_pos = CursorPos{}
+	e.mouse_down_row = 0
+	e.mouse_down_col = 0
+	e.mouse_pending = false
 }
 
 fn editor_set_cursor(mut e EditorConfig, pos CursorPos) {
@@ -320,6 +332,18 @@ fn editor_update_selection_cursor(mut e EditorConfig) {
 		cy: e.cy
 		cx: e.cx
 	})
+}
+
+fn editor_begin_keyboard_selection(mut e EditorConfig) {
+	if !e.selection_active {
+		pos := editor_clamp_pos(e, CursorPos{
+			cy: e.cy
+			cx: e.cx
+		})
+		e.select_anchor = pos
+		e.select_cursor = pos
+		e.selection_active = true
+	}
 }
 
 fn editor_delete_selection(mut e EditorConfig) bool {
@@ -1591,7 +1615,7 @@ fn editor_mouse_pos(mut e EditorConfig, term_row int, term_col int) CursorPos {
 			cx: 0
 		}
 	}
-	mut rx := term_col - editor_line_gutter_width(e) - 1
+	mut rx := e.coloff + term_col - editor_line_gutter_width(e) - 1
 	if rx < 0 {
 		rx = 0
 	}
@@ -1614,28 +1638,64 @@ fn editor_click_from_mouse(mut e EditorConfig, term_row int, term_col int) {
 	editor_complete_reset(mut e)
 }
 
-fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int) {
+fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int, extend bool) {
 	if e.command_mode || term_row < 1 || term_row > e.screenrows {
 		return
 	}
 	pos := editor_mouse_pos(mut e, term_row, term_col)
+	anchor := editor_clamp_pos(e, CursorPos{
+		cy: e.cy
+		cx: e.cx
+	})
 	editor_set_cursor(mut e, pos)
-	e.select_anchor = pos
+	if !extend {
+		e.select_anchor = pos
+	} else if !e.selection_active {
+		e.select_anchor = anchor
+	}
 	e.select_cursor = pos
+	e.mouse_down_pos = pos
+	e.mouse_down_row = term_row
+	e.mouse_down_col = term_col
+	e.mouse_pending = true
 	e.selection_active = true
 	e.selecting = true
 	editor_complete_reset(mut e)
 }
 
-fn editor_drag_mouse_selection(mut e EditorConfig, term_row int, term_col int) {
+fn editor_mouse_drag_far_enough(e EditorConfig, term_row int, term_col int) bool {
+	dy := if term_row >= e.mouse_down_row {
+		term_row - e.mouse_down_row
+	} else {
+		e.mouse_down_row - term_row
+	}
+	dx := if term_col >= e.mouse_down_col {
+		term_col - e.mouse_down_col
+	} else {
+		e.mouse_down_col - term_col
+	}
+	return dy >= 1 || dx >= 2
+}
+
+fn editor_drag_mouse_selection(mut e EditorConfig, term_row int, term_col int, force bool) {
 	if e.command_mode || !e.selecting {
 		return
 	}
+	if e.mouse_pending && !force && !editor_mouse_drag_far_enough(e, term_row, term_col) {
+		return
+	}
+	e.mouse_pending = false
 	mut row := term_row
 	if row < 1 {
+		if e.rowoff > 0 {
+			e.rowoff--
+		}
 		row = 1
 	}
 	if row > e.screenrows {
+		if e.rowoff + e.screenrows < e.rows.len {
+			e.rowoff++
+		}
 		row = e.screenrows
 	}
 	pos := editor_mouse_pos(mut e, row, term_col)
@@ -1647,10 +1707,40 @@ fn editor_end_mouse_selection(mut e EditorConfig) {
 	if !e.selecting {
 		return
 	}
+	if e.mouse_pending {
+		editor_set_cursor(mut e, e.mouse_down_pos)
+		editor_clear_selection(mut e)
+		editor_complete_reset(mut e)
+		return
+	}
 	e.selecting = false
+	e.mouse_pending = false
 	_, _, ok := editor_selection_bounds(e)
 	if !ok {
 		editor_clear_selection(mut e)
+	}
+}
+
+fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
+	editor_complete_reset(mut e)
+	editor_clear_selection(mut e)
+	if direction == .down {
+		if e.cy < e.rows.len {
+			editor_move_cursor(mut e, key_arrow_down)
+		}
+	} else {
+		if e.cy > 0 {
+			editor_move_cursor(mut e, key_arrow_up)
+		}
+	}
+	if e.cy < 0 {
+		e.cy = 0
+	}
+	if e.cy > e.rows.len {
+		e.cy = e.rows.len
+	}
+	if e.cy < e.rows.len && e.cx > e.rows[e.cy].chars.len {
+		e.cx = e.rows[e.cy].chars.len
 	}
 }
 
@@ -1762,6 +1852,17 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_clear_selection(mut e)
 			editor_move_cursor(mut e, c)
 		}
+		key_shift_arrow_up, key_shift_arrow_down, key_shift_arrow_left, key_shift_arrow_right {
+			editor_complete_reset(mut e)
+			editor_begin_keyboard_selection(mut e)
+			editor_move_cursor(mut e, match c {
+				key_shift_arrow_up { key_arrow_up }
+				key_shift_arrow_down { key_arrow_down }
+				key_shift_arrow_left { key_arrow_left }
+				else { key_arrow_right }
+			})
+			editor_update_selection_cursor(mut e)
+		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
 			editor_complete_reset(mut e)
 			if c == key_del && !e.selection_active {
@@ -1825,6 +1926,23 @@ fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
 
 fn tui_key_to_editor_key(ev &tui.Event) int {
 	code_int := int(ev.code)
+	if ev.modifiers.has(.shift) {
+		match ev.code {
+			.left {
+				return key_shift_arrow_left
+			}
+			.right {
+				return key_shift_arrow_right
+			}
+			.up {
+				return key_shift_arrow_up
+			}
+			.down {
+				return key_shift_arrow_down
+			}
+			else {}
+		}
+	}
 	if ev.modifiers.has(.ctrl) && ev.code == .delete {
 		return key_delete_word_forward
 	}
@@ -1973,36 +2091,46 @@ fn vro_event(ev &tui.Event, x voidptr) {
 		}
 		.mouse_down {
 			if ev.button == .left {
-				editor_begin_mouse_selection(mut app.editor, ev.y, ev.x)
+				editor_begin_mouse_selection(mut app.editor, ev.y, ev.x, ev.modifiers.has(.shift))
 				app.needs_redraw = true
 			}
 		}
 		.mouse_drag {
 			if ev.button == .left {
-				editor_drag_mouse_selection(mut app.editor, ev.y, ev.x)
+				editor_drag_mouse_selection(mut app.editor, ev.y, ev.x, false)
 				app.needs_redraw = true
 			}
 		}
 		.mouse_up {
+			editor_drag_mouse_selection(mut app.editor, ev.y, ev.x, false)
 			editor_end_mouse_selection(mut app.editor)
+			app.needs_redraw = true
+		}
+		.mouse_scroll {
+			editor_scroll_mouse(mut app.editor, ev.direction)
 			app.needs_redraw = true
 		}
 		.resized {
 			editor_sync_terminal_size(mut app.editor, ev.width, ev.height)
+			vro_apply_mouse_mode()
 			app.needs_redraw = true
 		}
 		else {}
 	}
 }
 
-fn vro_init(_ voidptr) {
+fn vro_apply_mouse_mode() {
 	if os.getenv('VRO_NO_MOUSE').len == 0 {
-		print('\x1b[?1003l\x1b[?1000h\x1b[?1002h\x1b[?1006h')
+		print('\x1b[?1003l\x1b[?1000l\x1b[?1002h\x1b[?1006h')
 		flush_stdout()
 	} else {
 		print('\x1b[?1003l\x1b[?1002l\x1b[?1000l\x1b[?1006l')
 		flush_stdout()
 	}
+}
+
+fn vro_init(_ voidptr) {
+	vro_apply_mouse_mode()
 }
 
 fn vro_cleanup(_ voidptr) {
@@ -2049,7 +2177,7 @@ fn print_vro_help() {
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
 	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; delete/backspace removes it.')
 	println('Line numbers are shown in the left gutter.')
-	println('Ctrl-Delete deletes the next word; Ctrl-W deletes the previous word; Ctrl-U deletes to line start.')
+	println('Ctrl-Delete deletes next word; Ctrl-W deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
 	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')
@@ -2103,6 +2231,7 @@ fn main() {
 		window_title:         'vro'
 		hide_cursor:          false
 		capture_events:       true
+		buffer_size:          4096
 		frame_rate:           120
 		use_alternate_buffer: true
 	)
