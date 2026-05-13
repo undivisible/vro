@@ -61,7 +61,7 @@ curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | b
 ```
 
 Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
-`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.7`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v0.3.8`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
 
 **Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
 
@@ -85,7 +85,7 @@ brew tap undivisible/tap https://github.com/undivisible/homebrew-tap
 brew install vro
 ```
 
-After you publish a release tag (e.g. `v0.3.7`), refresh the tap: `./scripts/print-release-shas.sh v0.3.7`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or installs will 404.
+After you publish a release tag (e.g. `v0.3.8`), refresh the tap: `./scripts/print-release-shas.sh v0.3.8`, then paste the `sha256` values into `../homebrew-tap/Formula/vro.rb`. Do not point the formula at a tag until the release assets exist, or installs will 404.
 
 ## Keybindings
 
@@ -101,7 +101,7 @@ After you publish a release tag (e.g. `v0.3.7`), refresh the tap: `./scripts/pri
 - `Ctrl-U`: delete to the start of the line
 - `Shift-Arrows`: extend selection when the terminal sends shifted arrow keys
 - `Enter`: new line
-- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor; drag selects text; wheel scrolls (`VRO_NO_MOUSE=1` disables)
+- Mouse: terminals with SGR mode (most modern terminals): left click moves cursor; drag selects text; double-click selects word; triple-click selects sentence; wheel scrolls (`VRO_NO_MOUSE=1` disables)
 
 ## Command Bar
 

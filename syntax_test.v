@@ -5,7 +5,7 @@ import strings
 import term.ui as tui
 
 fn test_vro_version() {
-	assert vro_version == '0.3.7'
+	assert vro_version == '0.3.8'
 }
 
 fn test_syntax_name_for_ext() {
@@ -401,6 +401,70 @@ fn test_mouse_same_cell_acts_like_click() {
 	editor_drag_mouse_selection(mut e, 1, gutter + 2, false)
 	editor_end_mouse_selection(mut e)
 	assert e.cx == 1
+	assert !e.selection_active
+}
+
+fn test_double_click_selects_word() {
+	mut row := Erow{
+		chars:  'alpha beta gamma'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 8, false, 1000)
+	editor_end_mouse_selection(mut e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 8, false, 1200)
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha  gamma'
+}
+
+fn test_triple_click_selects_sentence() {
+	mut row := Erow{
+		chars:  'One fish. Two fish! Red fish?'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 12, false, 1000)
+	editor_end_mouse_selection(mut e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 12, false, 1200)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 12, false, 1400)
+	assert e.selection_active
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows[0].chars.bytestr() == 'One fish.  Red fish?'
+}
+
+fn test_drag_resets_click_count() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	gutter := editor_line_gutter_width(e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 2, false, 1000)
+	editor_drag_mouse_selection(mut e, 1, gutter + 4, false)
+	editor_end_mouse_selection(mut e)
+	editor_begin_mouse_selection_at(mut e, 1, gutter + 2, false, 1200)
+	editor_end_mouse_selection(mut e)
 	assert !e.selection_active
 }
 

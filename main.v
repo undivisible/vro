@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '0.3.7'
+const vro_version = '0.3.8'
 
 const tab_stop = 4
 const quit_times = 3
@@ -27,6 +27,7 @@ const key_shift_arrow_left = 1012
 const key_shift_arrow_right = 1013
 const key_shift_arrow_up = 1014
 const key_shift_arrow_down = 1015
+const mouse_multi_click_ms = 500
 
 enum EditorPromptKind {
 	none
@@ -140,6 +141,9 @@ mut:
 	mouse_down_row    int
 	mouse_down_col    int
 	mouse_pending     bool
+	last_click_pos    CursorPos
+	last_click_ms     i64
+	click_count       int
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -310,6 +314,10 @@ fn editor_selection_bounds(e EditorConfig) (CursorPos, CursorPos, bool) {
 	return a, b, true
 }
 
+fn cursor_pos_equal(a CursorPos, b CursorPos) bool {
+	return a.cy == b.cy && a.cx == b.cx
+}
+
 fn editor_clear_selection(mut e EditorConfig) {
 	e.selection_active = false
 	e.selecting = false
@@ -318,6 +326,14 @@ fn editor_clear_selection(mut e EditorConfig) {
 	e.mouse_down_pos = CursorPos{}
 	e.mouse_down_row = 0
 	e.mouse_down_col = 0
+	e.mouse_pending = false
+}
+
+fn editor_set_selection(mut e EditorConfig, start CursorPos, end CursorPos) {
+	e.select_anchor = editor_clamp_pos(e, start)
+	e.select_cursor = editor_clamp_pos(e, end)
+	e.selection_active = true
+	e.selecting = false
 	e.mouse_pending = false
 }
 
@@ -1450,6 +1466,107 @@ fn word_end_after_cx(line string, cx int) int {
 	return end
 }
 
+fn word_bounds_at_cx(line string, cx int) (int, int) {
+	if line.len == 0 {
+		return 0, 0
+	}
+	mut pos := cx
+	if pos >= line.len {
+		pos = line.len - 1
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	if !is_word_byte(line[pos]) {
+		return pos, pos + 1
+	}
+	mut start := pos
+	for start > 0 && is_word_byte(line[start - 1]) {
+		start--
+	}
+	mut end := pos + 1
+	for end < line.len && is_word_byte(line[end]) {
+		end++
+	}
+	return start, end
+}
+
+fn is_sentence_end_byte(b u8) bool {
+	return b == `.` || b == `!` || b == `?`
+}
+
+fn sentence_bounds_at_cx(line string, cx int) (int, int) {
+	if line.len == 0 {
+		return 0, 0
+	}
+	mut pos := cx
+	if pos >= line.len {
+		pos = line.len - 1
+	}
+	if pos < 0 {
+		pos = 0
+	}
+	mut start := pos
+	for start > 0 {
+		prev := line[start - 1]
+		if is_sentence_end_byte(prev) {
+			break
+		}
+		start--
+	}
+	for start < line.len && (line[start] == ` ` || line[start] == `\t`) {
+		start++
+	}
+	mut end := pos
+	for end < line.len && !is_sentence_end_byte(line[end]) {
+		end++
+	}
+	if end < line.len {
+		end++
+	}
+	return start, end
+}
+
+fn editor_select_word_at(mut e EditorConfig, pos CursorPos) {
+	if pos.cy >= e.rows.len {
+		editor_clear_selection(mut e)
+		return
+	}
+	line := e.rows[pos.cy].chars.bytestr()
+	start, end := word_bounds_at_cx(line, pos.cx)
+	editor_set_cursor(mut e, CursorPos{
+		cy: pos.cy
+		cx: end
+	})
+	editor_set_selection(mut e, CursorPos{
+		cy: pos.cy
+		cx: start
+	}, CursorPos{
+		cy: pos.cy
+		cx: end
+	})
+}
+
+fn editor_select_sentence_at(mut e EditorConfig, pos CursorPos) {
+	if pos.cy >= e.rows.len {
+		editor_clear_selection(mut e)
+		return
+	}
+	line := e.rows[pos.cy].chars.bytestr()
+	start, end := sentence_bounds_at_cx(line, pos.cx)
+	editor_set_cursor(mut e, CursorPos{
+		cy: pos.cy
+		cx: end
+	})
+	editor_set_selection(mut e, CursorPos{
+		cy: pos.cy
+		cx: start
+	}, CursorPos{
+		cy: pos.cy
+		cx: end
+	})
+}
+
 fn editor_delete_word_backward(mut e EditorConfig) {
 	if editor_delete_selection(mut e) {
 		editor_clear_selection(mut e)
@@ -1638,11 +1755,36 @@ fn editor_click_from_mouse(mut e EditorConfig, term_row int, term_col int) {
 	editor_complete_reset(mut e)
 }
 
-fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int, extend bool) {
+fn editor_mouse_click_count(mut e EditorConfig, pos CursorPos, now_ms i64) int {
+	if cursor_pos_equal(e.last_click_pos, pos) && now_ms - e.last_click_ms <= mouse_multi_click_ms {
+		e.click_count++
+	} else {
+		e.click_count = 1
+	}
+	if e.click_count > 3 {
+		e.click_count = 1
+	}
+	e.last_click_pos = pos
+	e.last_click_ms = now_ms
+	return e.click_count
+}
+
+fn editor_begin_mouse_selection_at(mut e EditorConfig, term_row int, term_col int, extend bool, now_ms i64) {
 	if e.command_mode || term_row < 1 || term_row > e.screenrows {
 		return
 	}
 	pos := editor_mouse_pos(mut e, term_row, term_col)
+	clicks := editor_mouse_click_count(mut e, pos, now_ms)
+	if clicks == 2 {
+		editor_select_word_at(mut e, pos)
+		editor_complete_reset(mut e)
+		return
+	}
+	if clicks == 3 {
+		editor_select_sentence_at(mut e, pos)
+		editor_complete_reset(mut e)
+		return
+	}
 	anchor := editor_clamp_pos(e, CursorPos{
 		cy: e.cy
 		cx: e.cx
@@ -1661,6 +1803,10 @@ fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int, 
 	e.selection_active = true
 	e.selecting = true
 	editor_complete_reset(mut e)
+}
+
+fn editor_begin_mouse_selection(mut e EditorConfig, term_row int, term_col int, extend bool) {
+	editor_begin_mouse_selection_at(mut e, term_row, term_col, extend, time.now().unix_milli())
 }
 
 fn editor_mouse_drag_far_enough(e EditorConfig, term_row int, term_col int) bool {
@@ -1685,6 +1831,7 @@ fn editor_drag_mouse_selection(mut e EditorConfig, term_row int, term_col int, f
 		return
 	}
 	e.mouse_pending = false
+	e.click_count = 0
 	mut row := term_row
 	if row < 1 {
 		if e.rowoff > 0 {
@@ -2248,7 +2395,7 @@ fn print_vro_help() {
 	println('  -version, --version   Print version and exit')
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
-	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; delete/backspace removes it.')
+	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; double-click selects word; triple-click selects sentence.')
 	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Delete deletes next word; Ctrl-W/Option-Delete deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
