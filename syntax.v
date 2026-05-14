@@ -163,9 +163,53 @@ mut:
 	source       string
 }
 
+fn patch_v_regex(pat string) string {
+	mut b := strings.new_builder(pat.len)
+	mut i := 0
+	mut in_class := false
+	mut class_start := 0
+	mut escaped := false
+	for i < pat.len {
+		c := pat[i]
+		if escaped {
+			b.write_u8(c)
+			escaped = false
+			i++
+			continue
+		}
+		if c == `\\` {
+			b.write_u8(c)
+			escaped = true
+			i++
+			continue
+		}
+		if in_class {
+			if i == class_start + 1 || (i == class_start + 2 && pat[class_start + 1] == `^`) {
+				// first char inside class (or after ^)
+				if c == `]` {
+					b.write_u8(`\\`)
+					b.write_u8(c)
+					i++
+					continue
+				}
+			}
+			if c == `]` {
+				in_class = false
+			}
+		} else if c == `[` {
+			in_class = true
+			class_start = i
+		}
+		b.write_u8(c)
+		i++
+	}
+	return b.str()
+}
+
 fn compile_one_re(pat string) !regex.RE {
 	p2 := pat.replace('\\b', '')
-	mut re, err, _ := regex.regex_base(p2)
+	p3 := patch_v_regex(p2)
+	mut re, err, _ := regex.regex_base(p3)
 	if err != regex.compile_ok {
 		return error('regex compile ${err}: ${pat}')
 	}
@@ -174,7 +218,8 @@ fn compile_one_re(pat string) !regex.RE {
 
 fn compile_maybe_re(pat string) ?regex.RE {
 	p2 := pat.replace('\\b', '')
-	mut re, err, _ := regex.regex_base(p2)
+	p3 := patch_v_regex(p2)
+	mut re, err, _ := regex.regex_base(p3)
 	if err != regex.compile_ok {
 		return none
 	}
