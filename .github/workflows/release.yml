@@ -56,12 +56,21 @@ jobs:
           test -n "${V_EXE}"
           echo "V=${V_EXE}" >> "${GITHUB_ENV}"
 
-      - name: Verify vfmt
+      - name: Verify vfmt (unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}"
           "${V}" fmt -verify main.v input.v syntax.v syntax_test.v
+
+      - name: Format sources (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "${GITHUB_WORKSPACE}"
+          "${V}" fmt -w main.v input.v syntax.v syntax_test.v
 
       - name: Build vro
         shell: bash
