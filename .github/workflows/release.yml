@@ -34,7 +34,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build V from source
+      - name: Build V from source (unix)
+        if: matrix.os != 'windows-latest'
         shell: bash
         run: |
           set -euo pipefail
@@ -42,6 +43,16 @@ jobs:
           cd "${HOME}/vlang"
           make
           echo "V=${HOME}/vlang/v" >> "${GITHUB_ENV}"
+
+      - name: Build V from source (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/vlang/v.git "${HOME}/vlang"
+          cd "${HOME}/vlang"
+          cmd /c make.bat -msvc
+          echo "V=${HOME}/vlang/v.exe" >> "${GITHUB_ENV}"
 
       - name: Verify vfmt
         shell: bash
@@ -62,7 +73,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x ./${{ matrix.bin }}
+          test -x ./${{ matrix.bin }} || test -f ./${{ matrix.bin }}
           ./${{ matrix.bin }} -version
           ./${{ matrix.bin }} --help >/dev/null
 
