@@ -1,6 +1,5 @@
 name: Release
 
-# Mirrors inauguration: per-platform tarballs + .sha256 for wax / Homebrew parity.
 on:
   push:
     tags:
@@ -17,8 +16,20 @@ jobs:
         include:
           - os: macos-latest
             asset_suffix: macos-aarch64
+            ext: tar.gz
+            bin: vro
           - os: ubuntu-latest
             asset_suffix: linux-x86_64
+            ext: tar.gz
+            bin: vro
+          - os: ubuntu-24.04-arm
+            asset_suffix: linux-aarch64
+            ext: tar.gz
+            bin: vro
+          - os: windows-latest
+            asset_suffix: windows-x86_64
+            ext: zip
+            bin: vro.exe
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +41,12 @@ jobs:
           git clone --depth 1 https://github.com/vlang/v.git "${HOME}/vlang"
           cd "${HOME}/vlang"
           make
-          "${HOME}/vlang/v" version
+          echo "V=${HOME}/vlang/v" >> "${GITHUB_ENV}"
 
       - name: Verify vfmt
         shell: bash
         run: |
           set -euo pipefail
-          V="${HOME}/vlang/v"
           cd "${GITHUB_WORKSPACE}"
           "${V}" fmt -verify main.v input.v syntax.v syntax_test.v
 
@@ -44,23 +54,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          V="${HOME}/vlang/v"
           "${V}" -gc none -check .
           "${V}" -gc none test .
-          "${V}" -gc none -prod -o vro .
-          test -x ./vro
-          ./vro -version
-          ./vro --help >/dev/null
+          "${V}" -gc none -prod -o ${{ matrix.bin }} .
 
-      - name: Package tarball and checksum
+      - name: Verify binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x ./${{ matrix.bin }}
+          ./${{ matrix.bin }} -version
+          ./${{ matrix.bin }} --help >/dev/null
+
+      - name: Package (tar.gz)
+        if: matrix.ext == 'tar.gz'
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp vro "dist/vro"
+          cp ${{ matrix.bin }} "dist/${{ matrix.bin }}"
           cp -R syntax "dist/syntax"
-          (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" vro syntax)
+          (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" ${{ matrix.bin }} syntax)
           (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.tar.gz" > "vro-${{ matrix.asset_suffix }}.sha256")
+
+      - name: Package (zip)
+        if: matrix.ext == 'zip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp ${{ matrix.bin }} "dist/${{ matrix.bin }}"
+          cp -R syntax "dist/syntax"
+          (cd dist && zip -r "vro-${{ matrix.asset_suffix }}.zip" ${{ matrix.bin }} syntax)
+          (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.zip" > "vro-${{ matrix.asset_suffix }}.sha256")
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
