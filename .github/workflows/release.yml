@@ -52,7 +52,9 @@ jobs:
           mkdir -p "${HOME}/vlang"
           curl -fsSL "https://github.com/vlang/v/releases/download/0.5.1/v_windows.zip" -o /tmp/v.zip
           unzip -q /tmp/v.zip -d "${HOME}/vlang"
-          echo "V=${HOME}/vlang/v.exe" >> "${GITHUB_ENV}"
+          V_EXE=$(find "${HOME}/vlang" -name v.exe -type f | head -1)
+          test -n "${V_EXE}"
+          echo "V=${V_EXE}" >> "${GITHUB_ENV}"
 
       - name: Verify vfmt
         shell: bash
