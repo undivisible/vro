@@ -2,6 +2,8 @@
 
 A small `micro`-inspired terminal text editor written in V.
 
+150kb binary • compiles in ~0.4s
+
 ## Features
 
 - Open files from argv
