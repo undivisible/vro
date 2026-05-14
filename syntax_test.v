@@ -5,7 +5,7 @@ import strings
 import term.ui as tui
 
 fn test_vro_version() {
-	assert vro_version == '1.0.0'
+	assert vro_version == '1.0.1'
 }
 
 fn test_syntax_name_for_ext() {
@@ -35,7 +35,46 @@ fn test_hl_carry_multiline_block_comment() {
 	assert c[0] == false
 }
 
+fn setup_test_v_syntax_dir() !(string, string) {
+	dir := os.join_path(os.temp_dir(), 'vro-test-v-syntax')
+	os.rmdir_all(dir) or {}
+	os.mkdir_all(dir)!
+	v_yaml := 'filetype: v
+detect:
+  filename: "\\\\.(v|vv|vsh)\$"
+rules:
+  - comment: "//.*"
+  - comment:
+      start: "/\\\\*"
+      end: "\\\\*/"
+  - constant.string:
+      start: "\\""
+      end: "\\""
+      skip: "\\\\."
+  - keyword: "(fn|mut|pub|return|import|module|struct|enum|if|else|for|true|false|none|nil)"
+  - constant.number: "[0-9]+"
+  - symbol.brackets: "(\\\\{|\\\\}|\\\\(|\\\\)|\\\\[|\\\\])"
+'
+	os.write_file(os.join_path(dir, 'v.yaml'), v_yaml)!
+	old := os.getenv('VRO_SYNTAX_DIR')
+	os.setenv('VRO_SYNTAX_DIR', dir, true)
+	return dir, old
+}
+
+fn teardown_test_v_syntax_dir(dir string, old string) {
+	if old.len > 0 {
+		os.setenv('VRO_SYNTAX_DIR', old, true)
+	} else {
+		os.unsetenv('VRO_SYNTAX_DIR')
+	}
+	os.rmdir_all(dir) or {}
+}
+
 fn test_bundled_v_syntax_highlights_keywords() {
+	dir, old := setup_test_v_syntax_dir()!
+	defer {
+		teardown_test_v_syntax_dir(dir, old)
+	}
 	mut syn := load_syntax_for_path('main.v') or { panic('missing v syntax') }
 	mut ab := strings.new_builder(64)
 	hl_draw_line_slice(mut syn, 'fn main() {', 0, 11, []bool{}, mut ab)
@@ -45,6 +84,10 @@ fn test_bundled_v_syntax_highlights_keywords() {
 }
 
 fn test_bundled_v_line_comments_do_not_carry() {
+	dir, old := setup_test_v_syntax_dir()!
+	defer {
+		teardown_test_v_syntax_dir(dir, old)
+	}
 	mut syn := load_syntax_for_path('main.v') or { panic('missing v syntax') }
 	carry := []bool{len: syn.rules.len, init: false}
 	next := hl_carry_row(mut syn, '// comment', carry)
@@ -78,36 +121,13 @@ fn test_dynamic_syntax_dir_loads_unknown_extension() {
 	assert ab.str().contains('\x1b[35mzap\x1b[0m')
 }
 
-fn test_embedded_v_syntax_reports_source() {
-	old := os.getenv('VRO_SYNTAX_DIR')
-	old_xdg := os.getenv('XDG_DATA_HOME')
-	cwd := os.getwd()
-	tmp := os.join_path(os.temp_dir(), 'vro-empty-syntax-cwd')
-	xdg := os.join_path(os.temp_dir(), 'vro-empty-syntax-xdg')
+fn test_local_syntax_reports_source() {
+	dir, old := setup_test_v_syntax_dir()!
 	defer {
-		if old.len > 0 {
-			os.setenv('VRO_SYNTAX_DIR', old, true)
-		} else {
-			os.unsetenv('VRO_SYNTAX_DIR')
-		}
-		if old_xdg.len > 0 {
-			os.setenv('XDG_DATA_HOME', old_xdg, true)
-		} else {
-			os.unsetenv('XDG_DATA_HOME')
-		}
-		os.chdir(cwd) or {}
-		os.rmdir_all(tmp) or {}
-		os.rmdir_all(xdg) or {}
+		teardown_test_v_syntax_dir(dir, old)
 	}
-	os.rmdir_all(tmp) or {}
-	os.rmdir_all(xdg) or {}
-	os.mkdir_all(tmp)!
-	os.mkdir_all(xdg)!
-	os.chdir(tmp)!
-	os.setenv('VRO_SYNTAX_DIR', os.join_path(os.temp_dir(), 'vro-missing-syntax-dir'), true)
-	os.setenv('XDG_DATA_HOME', xdg, true)
-	mut syn := load_syntax_for_path('demo.v') or { panic('missing embedded v syntax') }
-	assert syn.source == 'embedded:v'
+	mut syn := load_syntax_for_path('demo.v') or { panic('missing v syntax') }
+	assert syn.source == os.join_path(dir, 'v.yaml')
 }
 
 fn test_ui_sanitize_display() {

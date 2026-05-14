@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '1.0.0'
+const vro_version = '1.0.1'
 
 const tab_stop = 4
 const quit_times = 3
@@ -768,9 +768,11 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e, filerow)
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff, len, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
@@ -1296,19 +1298,16 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e,
-					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e,
-					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
 			}
 		}
 		else {
@@ -1915,8 +1914,7 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	return false
@@ -2198,10 +2196,10 @@ fn tui_control_byte_to_editor_key(b u8) int {
 
 fn tui_csi_sequence_to_editor_key(seq string) int {
 	return match seq {
-		'\x1b[A', '\x1bOA' { key_arrow_up }
-		'\x1b[B', '\x1bOB' { key_arrow_down }
-		'\x1b[C', '\x1bOC' { key_arrow_right }
-		'\x1b[D', '\x1bOD' { key_arrow_left }
+		'\x1b[A', '\x1bOA', '\x1b[1;A' { key_arrow_up }
+		'\x1b[B', '\x1bOB', '\x1b[1;B' { key_arrow_down }
+		'\x1b[C', '\x1bOC', '\x1b[1;C' { key_arrow_right }
+		'\x1b[D', '\x1bOD', '\x1b[1;D' { key_arrow_left }
 		'\x1b[H', '\x1bOH', '\x1b[1~', '\x1b[7~' { key_home }
 		'\x1b[F', '\x1bOF', '\x1b[4~', '\x1b[8~' { key_end }
 		'\x1b[3~' { key_del }
@@ -2265,9 +2263,9 @@ fn editor_process_local_termui_bytes(mut e EditorConfig, text string) bool {
 					if !editor_process_key(mut e, key, '') {
 						return false
 					}
-					i = end
-					continue
 				}
+				i = end
+				continue
 			}
 		}
 		key := tui_control_byte_to_editor_key(b)

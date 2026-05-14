@@ -2,11 +2,11 @@ module main
 
 // SPDX-License-Identifier: MPL-2.0
 import os
+import net.http
 import regex
 import strings
 
-const builtin_v_yaml = $embed_file('syntax/v.yaml').to_string()
-const builtin_html_yaml = $embed_file('syntax/html.yaml').to_string()
+const micro_syntax_base_url = 'https://raw.githubusercontent.com/zyedidia/micro/master/runtime/syntax'
 
 fn syntax_user_dir() string {
 	return os.join_path(os.home_dir(), '.config', 'vro', 'syntax')
@@ -680,6 +680,28 @@ fn syntax_name_for_ext(ext string) string {
 	}
 }
 
+fn fetch_syntax_online(ft string) ?(string, string) {
+	cache_dir := syntax_user_dir()
+	cache_path := os.join_path(cache_dir, '${ft}.yaml')
+	if os.exists(cache_path) {
+		if src := os.read_file(cache_path) {
+			return src, 'online:${ft} (cached)'
+		}
+	}
+	url := '${micro_syntax_base_url}/${ft}.yaml'
+	resp := http.get(url) or { return none }
+	if resp.status_code != 200 {
+		return none
+	}
+	body := resp.body
+	if body.len == 0 {
+		return none
+	}
+	os.mkdir_all(cache_dir) or {}
+	os.write_file(cache_path, body) or {}
+	return body, 'online:${ft}'
+}
+
 fn load_syntax_for_path(path string) ?CompiledSyntax {
 	ext := os.file_ext(path)
 	mut yaml_src := ''
@@ -694,13 +716,11 @@ fn load_syntax_for_path(path string) ?CompiledSyntax {
 			}
 		}
 	}
-	if yaml_src.len == 0 && ft == 'v' {
-		yaml_src = builtin_v_yaml
-		source_name = 'embedded:v'
-	}
-	if yaml_src.len == 0 && ft == 'html' {
-		yaml_src = builtin_html_yaml
-		source_name = 'embedded:html'
+	if yaml_src.len == 0 && ft.len > 0 {
+		if src, source := fetch_syntax_online(ft) {
+			yaml_src = src
+			source_name = source
+		}
 	}
 	if yaml_src.len == 0 {
 		return none
