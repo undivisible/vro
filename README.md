@@ -2,7 +2,7 @@
 
 A small `micro`-inspired terminal text editor written in V.
 
-150kb binary • compiles in ~0.4s
+<0.5MB binary • compiles in ~0.4s
 
 ## Features
 
