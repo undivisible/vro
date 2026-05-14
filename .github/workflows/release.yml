@@ -101,14 +101,15 @@ jobs:
 
       - name: Package (zip)
         if: matrix.ext == 'zip'
-        shell: bash
+        shell: pwsh
         run: |
-          set -euo pipefail
-          mkdir -p dist
-          cp ${{ matrix.bin }} "dist/${{ matrix.bin }}"
-          cp -R syntax "dist/syntax"
-          (cd dist && zip -r "vro-${{ matrix.asset_suffix }}.zip" ${{ matrix.bin }} syntax)
-          (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.zip" > "vro-${{ matrix.asset_suffix }}.sha256")
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item ${{ matrix.bin }} dist/
+          Copy-Item -Recurse syntax dist/syntax
+          Set-Location dist
+          Compress-Archive -Path ${{ matrix.bin }},syntax -DestinationPath "vro-${{ matrix.asset_suffix }}.zip"
+          (Get-FileHash "vro-${{ matrix.asset_suffix }}.zip" -Algorithm SHA256).Hash.ToLower() + "  vro-${{ matrix.asset_suffix }}.zip" | Out-File -FilePath "vro-${{ matrix.asset_suffix }}.sha256" -Encoding ascii
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
