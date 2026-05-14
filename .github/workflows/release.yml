@@ -49,9 +49,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 https://github.com/vlang/v.git "${HOME}/vlang"
-          cd "${HOME}/vlang"
-          cmd /c make.bat -msvc
+          mkdir -p "${HOME}/vlang"
+          curl -fsSL "https://github.com/vlang/v/releases/download/0.5.1/v_windows.zip" -o /tmp/v.zip
+          unzip -q /tmp/v.zip -d "${HOME}/vlang"
           echo "V=${HOME}/vlang/v.exe" >> "${GITHUB_ENV}"
 
       - name: Verify vfmt
