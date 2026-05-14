@@ -99,6 +99,27 @@ fn test_bundled_v_line_comments_do_not_carry() {
 	assert !out.contains('\x1b[32mimport')
 }
 
+fn test_markdown_syntax_highlights_heading_and_links() {
+	y := 'filetype: markdown
+detect:
+  filename: "\\\\.md$"
+rules:
+  - special: "^#{1,6}.*"
+  - constant: "\\[[^]]+\\]"
+  - constant: "https?://[^ )>]+"
+  - statement: "^>.*"
+  - type: "\\*\\*[^*]*\\*\\*"
+'
+	mut syn := compile_syntax_from_yaml(y) or { panic('markdown compile: ${err}') }
+	assert syn.rules.len > 0
+	mut ab := strings.new_builder(64)
+	hl_draw_line_slice(mut syn, '# Hello', 0, 7, []bool{}, mut ab)
+	out := ab.str()
+	assert out.contains('\x1b[96m')
+	assert out.contains('Hello')
+	assert out.contains('\x1b[0m')
+}
+
 fn test_dynamic_syntax_dir_loads_unknown_extension() {
 	old := os.getenv('VRO_SYNTAX_DIR')
 	dir := os.join_path(os.temp_dir(), 'vro-dynamic-syntax-test')
