@@ -1872,15 +1872,20 @@ fn editor_end_mouse_selection(mut e EditorConfig) {
 fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 	editor_complete_reset(mut e)
 	editor_clear_selection(mut e)
-	if direction == .down {
-		if e.cy < e.rows.len {
-			editor_move_cursor(mut e, key_arrow_down)
+	match direction {
+		.down {
+			if e.cy < e.rows.len {
+				editor_move_cursor(mut e, key_arrow_down)
+			}
 		}
-	} else {
-		if e.cy > 0 {
-			editor_move_cursor(mut e, key_arrow_up)
+		.up {
+			if e.cy > 0 {
+				editor_move_cursor(mut e, key_arrow_up)
+			}
 		}
+		.left, .right, .unknown {}
 	}
+
 	if e.cy < 0 {
 		e.cy = 0
 	}
@@ -2223,6 +2228,14 @@ fn tui_escape_sequence_end(text string, start int) int {
 	}
 	next := text[start + 1]
 	if next == `[` {
+		if start + 2 < text.len && text[start + 2] == `M` {
+			// X10 mouse event: \x1b[M + 3 byte-sized data values
+			mut end := start + 6
+			if end > text.len {
+				end = text.len
+			}
+			return end
+		}
 		mut i := start + 2
 		for i < text.len {
 			b := text[i]
