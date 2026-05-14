@@ -509,7 +509,10 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 	}
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
-		if st < 0 || en <= st {
+		if st < 0 {
+			break
+		}
+		if en <= st {
 			pos++
 			continue
 		}
@@ -547,7 +550,10 @@ fn hl_reg_carry_through_line(mut cr CompiledReg, line string, carry_in bool) boo
 	}
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
-		if st < 0 || en <= st {
+		if st < 0 {
+			break
+		}
+		if en <= st {
 			pos++
 			continue
 		}
@@ -581,7 +587,10 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 	mut pos := 0
 	for pos < line.len {
 		st, en := cp.re.find_from(line, pos)
-		if st < 0 || en <= st {
+		if st < 0 {
+			break
+		}
+		if en <= st {
 			pos++
 			continue
 		}
