@@ -445,16 +445,16 @@ fn group_to_ansi(group string) string {
 		return '\x1b[90m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
-		return '\x1b[92m'
+		return '\x1b[32m'
 	}
 	if g.starts_with('constant.number') || g.contains('number') {
-		return '\x1b[36m'
+		return '\x1b[35m'
 	}
 	if g.starts_with('keyword') || g == 'statement' || g == 'preproc' {
-		return '\x1b[94m'
+		return '\x1b[34m'
 	}
 	if g.contains('type') {
-		return '\x1b[96m'
+		return '\x1b[36m'
 	}
 	if g.contains('symbol') || g.contains('operator') {
 		return '\x1b[37m'

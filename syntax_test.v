@@ -79,7 +79,7 @@ fn test_bundled_v_syntax_highlights_keywords() {
 	mut ab := strings.new_builder(64)
 	hl_draw_line_slice(mut syn, 'fn main() {', 0, 11, []bool{}, mut ab)
 	out := ab.str()
-	assert out.contains('\x1b[94mfn\x1b[0m')
+	assert out.contains('\x1b[34mfn\x1b[0m')
 	assert out.contains('\x1b[37m(')
 }
 
@@ -95,7 +95,7 @@ fn test_bundled_v_line_comments_do_not_carry() {
 	mut ab := strings.new_builder(64)
 	hl_draw_line_slice(mut syn, 'import os', 0, 9, next, mut ab)
 	out := ab.str()
-	assert out.contains('\x1b[94mimport\x1b[0m')
+	assert out.contains('\x1b[34mimport\x1b[0m')
 	assert !out.contains('\x1b[90mimport')
 }
 
@@ -139,7 +139,7 @@ fn test_dynamic_syntax_dir_loads_unknown_extension() {
 	assert syn.source == os.join_path(dir, 'foo.yaml')
 	mut ab := strings.new_builder(64)
 	hl_draw_line_slice(mut syn, 'zap value', 0, 9, []bool{}, mut ab)
-	assert ab.str().contains('\x1b[94mzap\x1b[0m')
+	assert ab.str().contains('\x1b[34mzap\x1b[0m')
 }
 
 fn test_local_syntax_reports_source() {
