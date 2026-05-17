@@ -4,6 +4,8 @@
 *.md  text eol=lf
 *.yml text eol=lf
 
-*.sh  linguist-detectable=false
+*.sh   linguist-detectable=false
+*.bash linguist-detectable=false
+*.zsh  linguist-detectable=false
 
 .github/** text eol=lf

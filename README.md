@@ -4,6 +4,8 @@ A small `micro`-inspired terminal text editor written in V.
 
 <0.5MB binary • compiles in ~0.4s
 
+![vro screenshot](media/vro.png)
+
 ## Features
 
 - Open files from argv
