@@ -22,7 +22,6 @@ A small `micro`-inspired terminal text editor written in V.
 v -gc none run . [file]
 ```
 
-`v -gc none .` only compiles the project and writes `./vro`; it does not run the editor.
 
 ## Build
 

@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '1.0.1'
+const vro_version = '1.0.2'
 
 const tab_stop = 4
 const quit_times = 3
@@ -768,9 +768,11 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e, filerow)
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff, len, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
@@ -1296,19 +1298,16 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e,
-					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e,
-					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
 			}
 		}
 		else {
@@ -1874,26 +1873,26 @@ fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 	editor_clear_selection(mut e)
 	match direction {
 		.down {
-			if e.cy < e.rows.len {
-				editor_move_cursor(mut e, key_arrow_down)
+			if e.rowoff + e.screenrows < e.rows.len {
+				e.rowoff++
 			}
 		}
 		.up {
-			if e.cy > 0 {
-				editor_move_cursor(mut e, key_arrow_up)
+			if e.rowoff > 0 {
+				e.rowoff--
 			}
 		}
-		.left, .right, .unknown {}
+		.left {
+			editor_move_cursor(mut e, key_arrow_left)
+		}
+		.right {
+			editor_move_cursor(mut e, key_arrow_right)
+		}
+		.unknown {}
 	}
 
-	if e.cy < 0 {
-		e.cy = 0
-	}
-	if e.cy > e.rows.len {
-		e.cy = e.rows.len
-	}
-	if e.cy < e.rows.len && e.cx > e.rows[e.cy].chars.len {
-		e.cx = e.rows[e.cy].chars.len
+	if e.cy >= e.rows.len && e.rows.len > 0 {
+		e.cy = e.rows.len - 1
 	}
 }
 
@@ -1920,8 +1919,7 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	return false
@@ -2106,8 +2104,15 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
 		return ctrl_key(u8(code_int))
 	}
-	if ev.code == .null && ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
-		return int(`\x1b`)
+	if ev.code == .null {
+		if ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
+			return int(`\x1b`)
+		}
+		if ev.ascii == 127 || ev.ascii == 8 || ev.ascii == 0 {
+			if ev.utf8 == '\x7f' || ev.utf8 == '\x08' {
+				return int(`\x7f`)
+			}
+		}
 	}
 	return match ev.code {
 		.enter {

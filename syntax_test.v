@@ -570,11 +570,52 @@ fn test_mouse_wheel_scrolls_without_dirtying() {
 		quit_times_left: quit_times
 	}
 	editor_scroll_mouse(mut e, .down)
-	assert e.cy == 1
-	assert e.dirty == 0
-	editor_scroll_mouse(mut e, .up)
+	assert e.rowoff == 1
 	assert e.cy == 0
 	assert e.dirty == 0
+	editor_scroll_mouse(mut e, .up)
+	assert e.rowoff == 0
+	assert e.cy == 0
+	assert e.dirty == 0
+}
+
+fn test_mouse_horizontal_scroll() {
+	mut rows := [Erow{
+		chars:  'hello'.bytes()
+		render: []u8{}
+	}]
+	editor_update_row(mut rows[0])
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	editor_scroll_mouse(mut e, .right)
+	assert e.cx == 1
+	assert e.dirty == 0
+	editor_scroll_mouse(mut e, .left)
+	assert e.cx == 0
+	assert e.dirty == 0
+}
+
+fn test_backspace_deletes_selection() {
+	mut row := Erow{
+		chars:  'hello world'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	editor_set_selection(mut e, CursorPos{0, 0}, CursorPos{0, 5})
+	assert e.selection_active
+	editor_del_char(mut e)
+	assert e.rows[0].chars.bytestr() == ' world'
+	assert !e.selection_active
 }
 
 fn test_open_save_preserves_trailing_newline() {
