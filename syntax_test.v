@@ -781,9 +781,9 @@ fn test_tui_key_to_editor_key_ctrl_delete_backspace() {
 fn test_tui_key_text_basic() {
 	// Printable character
 	ev := tui.Event{
-		code: tui.KeyCode.a
+		code:  tui.KeyCode.a
 		ascii: 97
-		utf8: 'a'
+		utf8:  'a'
 	}
 	assert tui_key_text(&ev) == 'a'
 
@@ -866,12 +866,12 @@ fn test_sgr_scroll_direction() {
 	assert sgr_scroll_direction('\x1b[<66;1;1M') == tui.Direction.left
 	assert sgr_scroll_direction('\x1b[<67;1;1M') == tui.Direction.right
 	// With modifier flags (buttons 64-95)
-	assert sgr_scroll_direction('\x1b[<68;1;1M') == tui.Direction.up    // shift+up
-	assert sgr_scroll_direction('\x1b[<69;1;1M') == tui.Direction.down  // shift+down
-	assert sgr_scroll_direction('\x1b[<80;1;1M') == tui.Direction.up    // ctrl+up
-	assert sgr_scroll_direction('\x1b[<81;1;1M') == tui.Direction.down  // ctrl+down
-	assert sgr_scroll_direction('\x1b[<84;1;1M') == tui.Direction.up    // ctrl+shift+up
-	assert sgr_scroll_direction('\x1b[<85;1;1M') == tui.Direction.down  // ctrl+shift+down
+	assert sgr_scroll_direction('\x1b[<68;1;1M') == tui.Direction.up // shift+up
+	assert sgr_scroll_direction('\x1b[<69;1;1M') == tui.Direction.down // shift+down
+	assert sgr_scroll_direction('\x1b[<80;1;1M') == tui.Direction.up // ctrl+up
+	assert sgr_scroll_direction('\x1b[<81;1;1M') == tui.Direction.down // ctrl+down
+	assert sgr_scroll_direction('\x1b[<84;1;1M') == tui.Direction.up // ctrl+shift+up
+	assert sgr_scroll_direction('\x1b[<85;1;1M') == tui.Direction.down // ctrl+shift+down
 	// Non-scroll events (buttons outside 64-95)
 	assert sgr_scroll_direction('\x1b[<0;1;1M') == tui.Direction.unknown
 	assert sgr_scroll_direction('\x1b[<35;1;1M') == tui.Direction.unknown
@@ -883,10 +883,12 @@ fn test_sgr_scroll_direction() {
 
 fn test_editor_process_key_ctrl_combinations() {
 	mut e := EditorConfig{
-		rows:            [Erow{
-			chars:  'hello world'.bytes()
-			render: []u8{}
-		}]
+		rows:            [
+			Erow{
+				chars:  'hello world'.bytes()
+				render: []u8{}
+			},
+		]
 		screenrows:      24
 		screencols:      80
 		quit_times_left: quit_times
@@ -935,10 +937,12 @@ fn test_editor_process_key_insert_text() {
 
 fn test_editor_process_local_termui_bytes_arrows() {
 	mut e := EditorConfig{
-		rows:            [Erow{
-			chars:  'hello world'.bytes()
-			render: []u8{}
-		}]
+		rows:            [
+			Erow{
+				chars:  'hello world'.bytes()
+				render: []u8{}
+			},
+		]
 		screenrows:      24
 		screencols:      80
 		quit_times_left: quit_times
@@ -1026,10 +1030,12 @@ fn test_editor_mouse_scroll_viewport() {
 }
 
 fn test_editor_mouse_scroll_horizontal() {
-	mut rows := [Erow{
-		chars:  'a very long line that exceeds the screen width for testing horizontal scrolling'.bytes()
-		render: []u8{}
-	}]
+	mut rows := [
+		Erow{
+			chars:  'a very long line that exceeds the screen width for testing horizontal scrolling'.bytes()
+			render: []u8{}
+		},
+	]
 	editor_update_row(mut rows[0])
 	mut e := EditorConfig{
 		rows:            rows
