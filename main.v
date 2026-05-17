@@ -1914,7 +1914,6 @@ fn sgr_scroll_direction(utf8 string) tui.Direction {
 
 fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 	editor_complete_reset(mut e)
-	editor_clear_selection(mut e)
 	match direction {
 		.down {
 			if e.rowoff + e.screenrows < e.rows.len {
@@ -2123,6 +2122,7 @@ fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
 }
 
 fn tui_key_to_editor_key(ev &tui.Event) int {
+	code_int := int(ev.code)
 	if ev.modifiers.has(.shift) {
 		match ev.code {
 			.left {
@@ -2146,8 +2146,8 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 	if (ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt)) && ev.code == .backspace {
 		return key_delete_word_backward
 	}
-	if ev.modifiers.has(.ctrl) && ev.ascii >= 1 && ev.ascii <= 26 {
-		return int(ev.ascii)
+	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
+		return ctrl_key(u8(code_int))
 	}
 	if ev.code == .null {
 		if ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
