@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '1.0.3'
+const vro_version = '1.0.4'
 
 const tab_stop = 4
 const quit_times = 3
@@ -1903,17 +1903,19 @@ fn sgr_scroll_direction(utf8 string) tui.Direction {
 		return .unknown
 	}
 	button := utf8[3..semi].int()
-	return match button {
-		64 { .up }
-		65 { .down }
-		66 { .left }
-		67 { .right }
+	if button < 64 || button > 95 {
+		return .unknown
+	}
+	return match button & 3 {
+		0 { .up }
+		1 { .down }
+		2 { .left }
+		3 { .right }
 		else { .unknown }
 	}
 }
 
 fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
-	editor_complete_reset(mut e)
 	match direction {
 		.down {
 			if e.rowoff + e.screenrows < e.rows.len {
@@ -1926,16 +1928,14 @@ fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 			}
 		}
 		.left {
-			editor_move_cursor(mut e, key_arrow_left)
+			if e.coloff > 0 {
+				e.coloff--
+			}
 		}
 		.right {
-			editor_move_cursor(mut e, key_arrow_right)
+			e.coloff++
 		}
 		.unknown {}
-	}
-
-	if e.cy >= e.rows.len && e.rows.len > 0 {
-		e.cy = e.rows.len - 1
 	}
 }
 
@@ -2253,6 +2253,7 @@ fn tui_control_byte_to_editor_key(b u8) int {
 
 fn tui_csi_sequence_to_editor_key(seq string) int {
 	return match seq {
+		'\x1b[27u', '\x1b[27;1u' { int(`\x1b`) }
 		'\x1b[A', '\x1bOA', '\x1b[1;A' { key_arrow_up }
 		'\x1b[B', '\x1bOB', '\x1b[1;B' { key_arrow_down }
 		'\x1b[C', '\x1bOC', '\x1b[1;C' { key_arrow_right }

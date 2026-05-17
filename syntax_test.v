@@ -5,7 +5,7 @@ import strings
 import term.ui as tui
 
 fn test_vro_version() {
-	assert vro_version == '1.0.3'
+	assert vro_version == '1.0.4'
 }
 
 fn test_syntax_name_for_ext() {
@@ -592,10 +592,10 @@ fn test_mouse_horizontal_scroll() {
 		quit_times_left: quit_times
 	}
 	editor_scroll_mouse(mut e, .right)
-	assert e.cx == 1
+	assert e.coloff == 1
 	assert e.dirty == 0
 	editor_scroll_mouse(mut e, .left)
-	assert e.cx == 0
+	assert e.coloff == 0
 	assert e.dirty == 0
 }
 
@@ -670,4 +670,403 @@ fn test_dirty_open_requires_bang() {
 	assert editor_run_command(mut e, 'open! ${path2}')
 	assert e.filename == path2
 	assert editor_rows_to_string(e) == 'two'
+}
+
+fn test_tui_key_to_editor_key_ctrl_letters() {
+	code_base := int(tui.KeyCode.a)
+	for i in 0 .. 26 {
+		c := code_base + i
+		ev := tui.Event{
+			code:      unsafe { tui.KeyCode(c) }
+			modifiers: tui.Modifiers.ctrl
+			ascii:     u8(c)
+			utf8:      ''
+		}
+		key := tui_key_to_editor_key(&ev)
+		assert key == ctrl_key(u8(c)), 'Ctrl+${u8(c).ascii_str()}: got ${key} expected ${ctrl_key(u8(c))}'
+	}
+}
+
+fn test_tui_key_to_editor_key_special_keys() {
+	ev := tui.Event{
+		code: tui.KeyCode.enter
+	}
+	assert tui_key_to_editor_key(&ev) == int(`\r`)
+	ev2 := tui.Event{
+		code: tui.KeyCode.escape
+	}
+	assert tui_key_to_editor_key(&ev2) == int(`\x1b`)
+	ev3 := tui.Event{
+		code: tui.KeyCode.tab
+	}
+	assert tui_key_to_editor_key(&ev3) == int(`\t`)
+	ev4 := tui.Event{
+		code: tui.KeyCode.backspace
+	}
+	assert tui_key_to_editor_key(&ev4) == int(`\x7f`)
+	ev5 := tui.Event{
+		code: tui.KeyCode.delete
+	}
+	assert tui_key_to_editor_key(&ev5) == key_del
+	ev6 := tui.Event{
+		code: tui.KeyCode.left
+	}
+	assert tui_key_to_editor_key(&ev6) == key_arrow_left
+	ev7 := tui.Event{
+		code: tui.KeyCode.right
+	}
+	assert tui_key_to_editor_key(&ev7) == key_arrow_right
+	ev8 := tui.Event{
+		code: tui.KeyCode.up
+	}
+	assert tui_key_to_editor_key(&ev8) == key_arrow_up
+	ev9 := tui.Event{
+		code: tui.KeyCode.down
+	}
+	assert tui_key_to_editor_key(&ev9) == key_arrow_down
+	ev10 := tui.Event{
+		code: tui.KeyCode.home
+	}
+	assert tui_key_to_editor_key(&ev10) == key_home
+	ev11 := tui.Event{
+		code: tui.KeyCode.end
+	}
+	assert tui_key_to_editor_key(&ev11) == key_end
+	ev12 := tui.Event{
+		code: tui.KeyCode.page_up
+	}
+	assert tui_key_to_editor_key(&ev12) == key_page_up
+	ev13 := tui.Event{
+		code: tui.KeyCode.page_down
+	}
+	assert tui_key_to_editor_key(&ev13) == key_page_down
+}
+
+fn test_tui_key_to_editor_key_shift_arrows() {
+	ev := tui.Event{
+		code:      tui.KeyCode.up
+		modifiers: tui.Modifiers.shift
+	}
+	assert tui_key_to_editor_key(&ev) == key_shift_arrow_up
+	ev2 := tui.Event{
+		code:      tui.KeyCode.down
+		modifiers: tui.Modifiers.shift
+	}
+	assert tui_key_to_editor_key(&ev2) == key_shift_arrow_down
+	ev3 := tui.Event{
+		code:      tui.KeyCode.left
+		modifiers: tui.Modifiers.shift
+	}
+	assert tui_key_to_editor_key(&ev3) == key_shift_arrow_left
+	ev4 := tui.Event{
+		code:      tui.KeyCode.right
+		modifiers: tui.Modifiers.shift
+	}
+	assert tui_key_to_editor_key(&ev4) == key_shift_arrow_right
+}
+
+fn test_tui_key_to_editor_key_ctrl_delete_backspace() {
+	ev := tui.Event{
+		code:      tui.KeyCode.delete
+		modifiers: tui.Modifiers.ctrl
+	}
+	assert tui_key_to_editor_key(&ev) == key_delete_word_forward
+	ev2 := tui.Event{
+		code:      tui.KeyCode.backspace
+		modifiers: tui.Modifiers.ctrl
+	}
+	assert tui_key_to_editor_key(&ev2) == key_delete_word_backward
+}
+
+fn test_tui_key_text_basic() {
+	// Printable character
+	ev := tui.Event{
+		code: tui.KeyCode.a
+		ascii: 97
+		utf8: 'a'
+	}
+	assert tui_key_text(&ev) == 'a'
+
+	// Ctrl+letter → empty
+	ev2 := tui.Event{
+		code:      tui.KeyCode.q
+		modifiers: tui.Modifiers.ctrl
+	}
+	assert tui_key_text(&ev2) == ''
+}
+
+fn test_tui_control_byte_to_editor_key() {
+	// Tab
+	assert tui_control_byte_to_editor_key(9) == int(`\t`)
+	// Enter (LF)
+	assert tui_control_byte_to_editor_key(10) == int(`\r`)
+	// Enter (CR)
+	assert tui_control_byte_to_editor_key(13) == int(`\r`)
+	// Escape
+	assert tui_control_byte_to_editor_key(27) == int(`\x1b`)
+	// Backspace
+	assert tui_control_byte_to_editor_key(127) == int(`\x7f`)
+	// Ctrl+letter (1-8, 11-12, 14-26)
+	assert tui_control_byte_to_editor_key(1) == ctrl_key(u8(97)) // Ctrl+A → ctrl_key('a')
+	assert tui_control_byte_to_editor_key(17) == ctrl_key(u8(113)) // Ctrl+Q → ctrl_key('q')
+	assert tui_control_byte_to_editor_key(26) == ctrl_key(u8(122)) // Ctrl+Z → ctrl_key('z')
+	// Non-control byte
+	assert tui_control_byte_to_editor_key(32) == 0
+	assert tui_control_byte_to_editor_key(65) == 0
+}
+
+fn test_tui_control_byte_to_editor_key_ctrl_mapping_correctness() {
+	// Verify that the ctrl_key computation in tui_control_byte_to_editor_key
+	// produces the same value as direct ctrl_key for each Ctrl+letter
+	// The function does: ctrl_key(96 | b) for bytes 1-8, 11-12, 14-26
+	for b in 1 .. 9 {
+		key := tui_control_byte_to_editor_key(u8(b))
+		expected := ctrl_key(u8(96 | b))
+		assert key == expected, 'byte ${b}: got ${key} expected ${expected}'
+	}
+	for b in 11 .. 13 {
+		key := tui_control_byte_to_editor_key(u8(b))
+		expected := ctrl_key(u8(96 | b))
+		assert key == expected, 'byte ${b}: got ${key} expected ${expected}'
+	}
+	for b in 14 .. 27 {
+		key := tui_control_byte_to_editor_key(u8(b))
+		expected := ctrl_key(u8(96 | b))
+		assert key == expected, 'byte ${b}: got ${key} expected ${expected}'
+	}
+}
+
+fn test_tui_csi_sequence_to_editor_key() {
+	assert tui_csi_sequence_to_editor_key('\x1b[A') == key_arrow_up
+	assert tui_csi_sequence_to_editor_key('\x1bOA') == key_arrow_up
+	assert tui_csi_sequence_to_editor_key('\x1b[1;A') == key_arrow_up
+	assert tui_csi_sequence_to_editor_key('\x1b[B') == key_arrow_down
+	assert tui_csi_sequence_to_editor_key('\x1b[C') == key_arrow_right
+	assert tui_csi_sequence_to_editor_key('\x1b[D') == key_arrow_left
+	assert tui_csi_sequence_to_editor_key('\x1b[H') == key_home
+	assert tui_csi_sequence_to_editor_key('\x1b[F') == key_end
+	assert tui_csi_sequence_to_editor_key('\x1b[3~') == key_del
+	assert tui_csi_sequence_to_editor_key('\x1b[5~') == key_page_up
+	assert tui_csi_sequence_to_editor_key('\x1b[6~') == key_page_down
+	assert tui_csi_sequence_to_editor_key('\x1b[1;2A') == key_shift_arrow_up
+	assert tui_csi_sequence_to_editor_key('\x1b[1;2B') == key_shift_arrow_down
+	assert tui_csi_sequence_to_editor_key('\x1b[1;2C') == key_shift_arrow_right
+	assert tui_csi_sequence_to_editor_key('\x1b[1;2D') == key_shift_arrow_left
+	assert tui_csi_sequence_to_editor_key('\x1b[3;5~') == key_delete_word_forward
+	assert tui_csi_sequence_to_editor_key('\x1b\x7f') == key_delete_word_backward
+	// Kitty protocol Escape
+	assert tui_csi_sequence_to_editor_key('\x1b[27u') == int(`\x1b`)
+	assert tui_csi_sequence_to_editor_key('\x1b[27;1u') == int(`\x1b`)
+}
+
+fn test_sgr_scroll_direction() {
+	// Standard SGR scroll events
+	assert sgr_scroll_direction('\x1b[<64;1;1M') == tui.Direction.up
+	assert sgr_scroll_direction('\x1b[<65;1;1M') == tui.Direction.down
+	assert sgr_scroll_direction('\x1b[<66;1;1M') == tui.Direction.left
+	assert sgr_scroll_direction('\x1b[<67;1;1M') == tui.Direction.right
+	// With modifier flags (buttons 64-95)
+	assert sgr_scroll_direction('\x1b[<68;1;1M') == tui.Direction.up    // shift+up
+	assert sgr_scroll_direction('\x1b[<69;1;1M') == tui.Direction.down  // shift+down
+	assert sgr_scroll_direction('\x1b[<80;1;1M') == tui.Direction.up    // ctrl+up
+	assert sgr_scroll_direction('\x1b[<81;1;1M') == tui.Direction.down  // ctrl+down
+	assert sgr_scroll_direction('\x1b[<84;1;1M') == tui.Direction.up    // ctrl+shift+up
+	assert sgr_scroll_direction('\x1b[<85;1;1M') == tui.Direction.down  // ctrl+shift+down
+	// Non-scroll events (buttons outside 64-95)
+	assert sgr_scroll_direction('\x1b[<0;1;1M') == tui.Direction.unknown
+	assert sgr_scroll_direction('\x1b[<35;1;1M') == tui.Direction.unknown
+	assert sgr_scroll_direction('\x1b[<96;1;1M') == tui.Direction.unknown
+	// Non-SGR sequences
+	assert sgr_scroll_direction('\x1b[A') == tui.Direction.unknown
+	assert sgr_scroll_direction('hello') == tui.Direction.unknown
+}
+
+fn test_editor_process_key_ctrl_combinations() {
+	mut e := EditorConfig{
+		rows:            [Erow{
+			chars:  'hello world'.bytes()
+			render: []u8{}
+		}]
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+	}
+	editor_update_row(mut e.rows[0])
+
+	// Ctrl+S → save (no-op with no filename, but should not crash)
+	assert editor_process_key(mut e, ctrl_key(`s`), '')
+
+	// Ctrl+L → redraw (no-op)
+	assert editor_process_key(mut e, ctrl_key(`l`), '')
+
+	// Escape → no-op in normal mode
+	assert editor_process_key(mut e, int(`\x1b`), '')
+
+	// Tab → insert spaces
+	old_cx := e.cx
+	assert editor_process_key(mut e, int(`\t`), '')
+	assert e.cx >= old_cx + tab_stop
+
+	// Backspace (byte 127 and Ctrl+H)
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	// Delete (key_del)
+	e.cy = 0
+	e.cx = 5
+	assert editor_process_key(mut e, key_del, '')
+}
+
+fn test_editor_process_key_insert_text() {
+	mut e := EditorConfig{
+		rows:            [Erow{
+			chars:  ''.bytes()
+			render: []u8{}
+		}]
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+	}
+	editor_update_row(mut e.rows[0])
+
+	// Insert 'a' via text
+	assert editor_process_key(mut e, 0, 'a')
+	assert e.rows[e.cy].chars == [u8(`a`)]
+	assert e.cx == 1
+}
+
+fn test_editor_process_local_termui_bytes_arrows() {
+	mut e := EditorConfig{
+		rows:            [Erow{
+			chars:  'hello world'.bytes()
+			render: []u8{}
+		}]
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+	}
+	editor_update_row(mut e.rows[0])
+
+	// Arrow right
+	e.cx = 0
+	assert editor_process_local_termui_bytes(mut e, '\x1b[C')
+	assert e.cx == 1
+	// Arrow left
+	assert editor_process_local_termui_bytes(mut e, '\x1b[D')
+	assert e.cx == 0
+}
+
+fn test_editor_process_local_termui_bytes_ctrl_q() {
+	mut e := EditorConfig{
+		rows:            [Erow{
+			chars:  'hello'.bytes()
+			render: []u8{}
+		}]
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+		dirty:           0 // clean file → Ctrl+Q should quit (return false)
+	}
+	editor_update_row(mut e.rows[0])
+
+	// Ctrl+Q via Path 1 (control byte)
+	assert !editor_process_local_termui_bytes(mut e, '\x11')
+}
+
+fn test_editor_process_local_termui_bytes_paste() {
+	mut e := EditorConfig{
+		rows:            [Erow{
+			chars:  ''.bytes()
+			render: []u8{}
+		}]
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+	}
+	editor_update_row(mut e.rows[0])
+
+	// Paste text
+	assert editor_process_local_termui_bytes(mut e, 'hello')
+	assert editor_rows_to_string(e) == 'hello'
+}
+
+fn test_editor_mouse_scroll_viewport() {
+	mut rows := []Erow{}
+	for i in 0 .. 10 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+	}
+
+	// Scroll down
+	assert e.rowoff == 0
+	editor_scroll_mouse(mut e, .down)
+	assert e.rowoff == 1
+	// Scroll up
+	editor_scroll_mouse(mut e, .up)
+	assert e.rowoff == 0
+	// Scroll past bottom edge
+	for _ in 0 .. 20 {
+		editor_scroll_mouse(mut e, .down)
+	}
+	// Max scroll: rowoff + screenrows <= rows.len → rowoff max = rows.len - screenrows = 7
+	assert e.rowoff == 7
+	// Scroll up past top edge
+	for _ in 0 .. 20 {
+		editor_scroll_mouse(mut e, .up)
+	}
+	assert e.rowoff == 0
+}
+
+fn test_editor_mouse_scroll_horizontal() {
+	mut rows := [Erow{
+		chars:  'a very long line that exceeds the screen width for testing horizontal scrolling'.bytes()
+		render: []u8{}
+	}]
+	editor_update_row(mut rows[0])
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+	}
+
+	assert e.coloff == 0
+	editor_scroll_mouse(mut e, .right)
+	assert e.coloff == 1
+	editor_scroll_mouse(mut e, .left)
+	assert e.coloff == 0
+	// Scrolling horizontally should NOT change cursor position
+	assert e.cx == 0
+}
+
+fn test_editor_mouse_scroll_no_content_change() {
+	mut rows := []Erow{}
+	for i in 0 .. 5 {
+		mut row := Erow{
+			chars:  'line'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+		dirty:           0
+	}
+
+	editor_scroll_mouse(mut e, .down)
+	assert e.dirty == 0
+	editor_scroll_mouse(mut e, .right)
+	assert e.dirty == 0
 }
