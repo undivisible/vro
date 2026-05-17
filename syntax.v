@@ -442,24 +442,24 @@ fn parse_syntax_yaml(src string) ![]YamlRule {
 fn group_to_ansi(group string) string {
 	g := group.to_lower()
 	if g.starts_with('comment') {
-		return '\x1b[90m'
+		return '\x1b[2m\x1b[32m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
-		return '\x1b[32m'
+		return '\x1b[33m'
 	}
 	if g.starts_with('constant.number') || g.contains('number') {
-		return '\x1b[35m'
+		return '\x1b[36m'
 	}
 	if g.starts_with('keyword') || g == 'statement' || g == 'preproc' {
-		return '\x1b[34m'
+		return '\x1b[35m'
 	}
 	if g.contains('type') {
-		return '\x1b[36m'
+		return '\x1b[34m'
 	}
 	if g.contains('symbol') || g.contains('operator') {
 		return '\x1b[37m'
 	}
-	return '\x1b[97m'
+	return '\x1b[96m'
 }
 
 // Find end pattern from search (same skip rules as micro-style regions).
