@@ -5,7 +5,7 @@ import strings
 import term.ui as tui
 
 fn test_vro_version() {
-	assert vro_version == '1.0.4'
+	assert vro_version == '1.0.5'
 }
 
 fn test_syntax_name_for_ext() {
