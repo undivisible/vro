@@ -7,5 +7,6 @@
 *.sh   linguist-detectable=false
 *.bash linguist-detectable=false
 *.zsh  linguist-detectable=false
+*.fish linguist-detectable=false
 
 .github/** text eol=lf
