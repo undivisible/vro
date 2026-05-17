@@ -438,6 +438,7 @@ fn parse_syntax_yaml(src string) ![]YamlRule {
 	return rules
 }
 
+@[inline]
 fn group_to_ansi(group string) string {
 	g := group.to_lower()
 	if g.starts_with('comment') {
@@ -668,6 +669,42 @@ fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int
 	}
 }
 
+// Emit slice using pre-computed owners/groups (hot path for cached rows).
+fn hl_draw_line_slice_cached(owners []int, groups []string, line string, coloff int, width int, mut ab strings.Builder) {
+	mut i := coloff
+	mut limit := coloff + width
+	if limit > line.len {
+		limit = line.len
+	}
+	if owners.len != line.len {
+		// cache out of sync – fall through to identity emit
+		if line.len > coloff {
+			mut n := line.len - coloff
+			if n > width {
+				n = width
+			}
+			if n > 0 {
+				ab.write_string(line[coloff..coloff + n])
+			}
+		}
+		return
+	}
+	for i < limit {
+		if owners[i] == -1 {
+			ab.write_u8(line[i])
+			i++
+			continue
+		}
+		g := groups[i]
+		ab.write_string(group_to_ansi(g))
+		for i < limit && owners[i] != -1 && groups[i] == g {
+			ab.write_u8(line[i])
+			i++
+		}
+		ab.write_string('\x1b[0m')
+	}
+}
+
 // Micro-style syntax bundle names (see micro runtime/syntax/*.yaml).
 fn syntax_name_for_ext(ext string) string {
 	return match ext {
@@ -684,7 +721,7 @@ fn syntax_name_for_ext(ext string) string {
 			'c'
 		}
 		'.py', '.pyw' {
-			'python'
+			'python3'
 		}
 		'.js', '.mjs', '.cjs' {
 			'javascript'
@@ -702,7 +739,7 @@ fn syntax_name_for_ext(ext string) string {
 			'markdown'
 		}
 		'.sh', '.bash', '.zsh' {
-			'shell'
+			'sh'
 		}
 		'.toml' {
 			'toml'

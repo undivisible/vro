@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '1.0.2'
+const vro_version = '1.0.3'
 
 const tab_stop = 4
 const quit_times = 3
@@ -36,6 +36,7 @@ enum EditorPromptKind {
 	save_name
 }
 
+@[inline]
 fn ctrl_key(c u8) int {
 	return int(c & 0x1f)
 }
@@ -74,6 +75,10 @@ struct Erow {
 mut:
 	chars  []u8
 	render []u8
+	// syntax highlight cache: populated on first render, invalidated on write / carry change.
+	hl_owners []int
+	hl_groups []string
+	hl_cached bool
 }
 
 struct CursorPos {
@@ -192,6 +197,7 @@ fn editor_update_row(mut row Erow) {
 		}
 	}
 	row.render = renderer
+	row.hl_cached = false
 }
 
 fn editor_hl_carry_invalidate(mut e EditorConfig) {
@@ -550,6 +556,7 @@ fn editor_save(mut e EditorConfig) bool {
 	return editor_save_to_path(mut e, filename)
 }
 
+@[inline]
 fn digit_count(n int) int {
 	mut v := n
 	if v < 1 {
@@ -568,6 +575,7 @@ fn editor_line_gutter_width(e EditorConfig) int {
 	return digit_count(total_lines) + 1
 }
 
+@[inline]
 fn editor_text_screencols(e EditorConfig) int {
 	mut cols := e.screencols - editor_line_gutter_width(e)
 	if cols < 1 {
@@ -664,6 +672,7 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 			e.hl_carry_enter[li] = snap
 			line := e.rows[li].render.bytestr()
 			carry = hl_carry_row(mut e.hl_syn, line, carry)
+			e.rows[li].hl_cached = false
 		}
 		e.hl_carry_dirty_from = -1
 		return
@@ -685,6 +694,7 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 		e.hl_carry_enter << snap
 		line := e.rows[li].render.bytestr()
 		carry = hl_carry_row(mut e.hl_syn, line, carry)
+		e.rows[li].hl_cached = false
 	}
 	e.hl_carry_lines = e.rows.len
 	e.hl_carry_rules = rl
@@ -743,7 +753,15 @@ fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render s
 	}
 	if e.hl_syn.rules.len > 0 && !e.hl_disable {
 		carry_in := if filerow < e.hl_carry_enter.len { e.hl_carry_enter[filerow] } else { []bool{} }
-		hl_draw_line_slice(mut e.hl_syn, render, start, len, carry_in, mut ab)
+		row := e.rows[filerow]
+		if !row.hl_cached {
+			owners, groups, _ := hl_fill_owners(mut e.hl_syn, render, carry_in)
+			e.rows[filerow].hl_owners = owners
+			e.rows[filerow].hl_groups = groups
+			e.rows[filerow].hl_cached = true
+		}
+		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups,
+			render, start, len, mut ab)
 	} else {
 		ab.write_string(render[start..start + len])
 	}
@@ -1001,7 +1019,7 @@ fn editor_sync_prompt_display(mut e EditorConfig) {
 }
 
 fn editor_find_callback(mut e EditorConfig, query string, key int) {
-	if key == int(`\r`) || key == int(`\x1b`) {
+	if key == int(`\r`) || key == int(`\n`) || key == int(`\x1b`) {
 		e.find_last = -1
 		e.find_direction = 1
 		return
@@ -1185,7 +1203,7 @@ fn editor_prompt_key(mut e EditorConfig, key int) bool {
 			editor_cancel_prompt(mut e)
 			return true
 		}
-		int(`\r`) {
+		int(`\r`), int(`\n`) {
 			if e.prompt_text.len != 0 || e.prompt_kind == .search || e.prompt_kind == .command {
 				return editor_submit_prompt(mut e)
 			}
@@ -1209,7 +1227,7 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 	match cmd {
 		'q', 'quit', 'exit', 'x' {
 			if e.dirty > 0 {
-				editor_set_status_message(mut e, 'Unsaved changes. Use quit! or Ctrl-Q to force.')
+				editor_set_status_message(mut e, 'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
 				return true
 			}
 			print('\x1b[2J')
@@ -1344,6 +1362,7 @@ fn emmet_is_void(tag string) bool {
 	}
 }
 
+@[inline]
 fn is_word_byte(c u8) bool {
 	return (c >= `a` && c <= `z`) || (c >= `A` && c <= `Z`) || (c >= `0` && c <= `9`) || c == `_`
 }
@@ -1416,7 +1435,6 @@ fn editor_try_emmet_tab(mut e EditorConfig) bool {
 	editor_insert_row(mut e, e.cy + 2, line3)
 	e.cy = e.cy + 1
 	e.cx = e.rows[e.cy].chars.len
-	e.dirty++
 	e.words_dirty = true
 	editor_hl_carry_mark_dirty_tail(mut e, e.cy - 2)
 	editor_complete_reset(mut e)
@@ -1868,6 +1886,30 @@ fn editor_end_mouse_selection(mut e EditorConfig) {
 	}
 }
 
+fn sgr_scroll_direction(utf8 string) tui.Direction {
+	if utf8.len < 6 || utf8[0] != 0x1b || utf8[1] != `[` || utf8[2] != `<` {
+		return .unknown
+	}
+	mut semi := -1
+	for i in 3 .. utf8.len {
+		if utf8[i] == `;` {
+			semi = i
+			break
+		}
+	}
+	if semi <= 3 {
+		return .unknown
+	}
+	button := utf8[3..semi].int()
+	return match button {
+		64 { .up }
+		65 { .down }
+		66 { .left }
+		67 { .right }
+		else { .unknown }
+	}
+}
+
 fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 	editor_complete_reset(mut e)
 	editor_clear_selection(mut e)
@@ -1933,7 +1975,8 @@ fn editor_insert_text(mut e EditorConfig, text string) {
 
 fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	if e.command_mode {
-		if text.len > 0 && c != int(`\r`) && c != int(`\x1b`) && c != int(`\x7f`) && c != int(`\t`) {
+		if text.len > 0 && c != int(`\r`) && c != int(`\n`) && c != int(`\x1b`) && c != int(`\x7f`)
+			&& c != int(`\t`) {
 			editor_prompt_insert(mut e, text)
 			return true
 		}
@@ -1944,7 +1987,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	}
 	dirty_before := e.dirty
 	match c {
-		int(`\r`) {
+		int(`\r`), int(`\n`) {
 			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
 		}
@@ -2077,7 +2120,6 @@ fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
 }
 
 fn tui_key_to_editor_key(ev &tui.Event) int {
-	code_int := int(ev.code)
 	if ev.modifiers.has(.shift) {
 		match ev.code {
 			.left {
@@ -2101,8 +2143,8 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 	if (ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt)) && ev.code == .backspace {
 		return key_delete_word_backward
 	}
-	if ev.modifiers.has(.ctrl) && code_int >= int(tui.KeyCode.a) && code_int <= int(tui.KeyCode.z) {
-		return ctrl_key(u8(code_int))
+	if ev.modifiers.has(.ctrl) && ev.ascii >= 1 && ev.ascii <= 26 {
+		return int(ev.ascii)
 	}
 	if ev.code == .null {
 		if ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
@@ -2347,7 +2389,13 @@ fn vro_event(ev &tui.Event, x voidptr) {
 			app.needs_redraw = true
 		}
 		.mouse_scroll {
-			editor_scroll_mouse(mut app.editor, ev.direction)
+			// TUI maps SGR buttons 64-95 to up/down only (never left/right),
+			// so parse the raw escape sequence to get the actual direction.
+			mut dir := sgr_scroll_direction(ev.utf8)
+			if dir == .unknown {
+				dir = ev.direction
+			}
+			editor_scroll_mouse(mut app.editor, dir)
 			app.needs_redraw = true
 		}
 		.resized {
@@ -2458,7 +2506,9 @@ fn main() {
 
 	if args.len >= 2 {
 		editor_open(mut app.editor, args[1]) or {
-			editor_set_status_message(mut app.editor, 'Could not open file: ${err.msg()}')
+			// File does not exist – start with an empty buffer; filename
+			// is already set by editor_open so the user can save to it.
+			editor_set_status_message(mut app.editor, 'New file: ${args[1]}')
 		}
 	}
 
