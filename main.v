@@ -6,7 +6,7 @@ import term.ui as tui
 import strings
 import time
 
-const vro_version = '1.0.4'
+const vro_version = '1.0.5'
 
 const tab_stop = 4
 const quit_times = 3
@@ -471,7 +471,6 @@ fn editor_del_char(mut e EditorConfig) {
 		editor_del_row(mut e, e.cy)
 		e.cy--
 		e.cx = prev_len
-		e.dirty++
 		return
 	}
 	e.dirty++
@@ -760,8 +759,8 @@ fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render s
 			e.rows[filerow].hl_groups = groups
 			e.rows[filerow].hl_cached = true
 		}
-		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups, render,
-			start, len, mut ab)
+		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups,
+			render, start, len, mut ab)
 	} else {
 		ab.write_string(render[start..start + len])
 	}
@@ -786,9 +785,11 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e, filerow)
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff, len, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
@@ -1225,8 +1226,7 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 	match cmd {
 		'q', 'quit', 'exit', 'x' {
 			if e.dirty > 0 {
-				editor_set_status_message(mut e,
-					'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
+				editor_set_status_message(mut e, 'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
 				return true
 			}
 			print('\x1b[2J')
@@ -1315,19 +1315,16 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e,
-					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e,
-					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
 			}
 		}
 		else {
@@ -1962,8 +1959,7 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	return false

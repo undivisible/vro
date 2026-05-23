@@ -5,7 +5,7 @@ import strings
 import term.ui as tui
 
 fn test_vro_version() {
-	assert vro_version == '1.0.4'
+	assert vro_version == '1.0.5'
 }
 
 fn test_syntax_name_for_ext() {
@@ -1051,6 +1051,99 @@ fn test_editor_mouse_scroll_horizontal() {
 	assert e.coloff == 0
 	// Scrolling horizontally should NOT change cursor position
 	assert e.cx == 0
+}
+
+fn test_backspace_at_line_start_merges_with_previous() {
+	mut rows := [
+		Erow{
+			chars:  'hello'.bytes()
+			render: []u8{}
+		},
+		Erow{
+			chars:  'world'.bytes()
+			render: []u8{}
+		},
+	]
+	for mut r in rows {
+		editor_update_row(mut r)
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+		dirty:           0
+		cx:              0
+		cy:              1
+	}
+	editor_del_char(mut e)
+	assert e.rows.len == 1
+	assert e.rows[0].chars.bytestr() == 'helloworld'
+	assert e.cx == 5
+	assert e.cy == 0
+	assert e.dirty > 0
+}
+
+fn test_backspace_at_line_start_merges_with_previous_key_routing() {
+	mut rows := [
+		Erow{
+			chars:  'hello'.bytes()
+			render: []u8{}
+		},
+		Erow{
+			chars:  'world'.bytes()
+			render: []u8{}
+		},
+	]
+	for mut r in rows {
+		editor_update_row(mut r)
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+		dirty:           0
+		cx:              0
+		cy:              1
+	}
+	// Simulate backspace key (127 = int(`\x7f`))
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.rows.len == 1
+	assert e.rows[0].chars.bytestr() == 'helloworld'
+	assert e.cx == 5
+	assert e.cy == 0
+}
+
+fn test_backspace_at_line_start_merges_with_previous_via_local_bytes() {
+	mut rows := [
+		Erow{
+			chars:  'hello'.bytes()
+			render: []u8{}
+		},
+		Erow{
+			chars:  'world'.bytes()
+			render: []u8{}
+		},
+	]
+	for mut r in rows {
+		editor_update_row(mut r)
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      24
+		screencols:      80
+		quit_times_left: quit_times
+		dirty:           0
+		cx:              0
+		cy:              1
+	}
+	// Simulate backspace byte via local termui bytes
+	assert editor_process_local_termui_bytes(mut e, u8(127).ascii_str())
+	assert e.rows.len == 1
+	assert e.rows[0].chars.bytestr() == 'helloworld'
+	assert e.cx == 5
+	assert e.cy == 0
 }
 
 fn test_editor_mouse_scroll_no_content_change() {
