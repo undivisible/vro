@@ -172,6 +172,16 @@ fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
 }
 
+fn test_bundled_v_line_comment_region_does_not_carry() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	carry := []bool{len: syn.rules.len, init: false}
+	next := hl_carry_row(mut syn, '// comment', carry)
+	assert !next.any(it)
+	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', 'return') != 'comment'
+	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', '0x1f') == 'constant.number'
+}
+
 fn test_ui_sanitize_display() {
 	assert ui_sanitize_display('') == ''
 	esc := 'a' + u8(0x1b).ascii_str() + 'b'
@@ -817,6 +827,80 @@ fn test_split_screen_renders_multiple_filenames() {
 	out := app_build_screen(mut app)
 	assert out.contains(path1)
 	assert out.contains(path2)
+}
+
+fn test_right_split_renders_second_pane_on_same_row() {
+	path1 := os.join_path(os.temp_dir(), 'vro-right-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-right-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left-side')!
+	os.write_file(path2, 'right-side')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains('\x1b[1;1H')
+	assert out.contains('\x1b[1;41H')
+	assert out.contains('left-side')
+	assert out.contains('right-side')
+}
+
+fn test_bottom_split_renders_second_pane_lower() {
+	path1 := os.join_path(os.temp_dir(), 'vro-bottom-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-bottom-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'top-side')!
+	os.write_file(path2, 'bottom-side')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'bottom ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains('\x1b[1;1H')
+	assert out.contains('\x1b[7;1H')
+	assert out.contains('top-side')
+	assert out.contains('bottom-side')
+}
+
+fn test_split_command_escape_cancels_command_mode() {
+	path1 := os.join_path(os.temp_dir(), 'vro-escape-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-escape-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	assert app_process_key(mut app, ctrl_key(`e`), '')
+	assert app_active_editor(mut app).command_mode
+	assert app_process_local_termui_bytes(mut app, '\x1b')
+	active := app_active_editor(mut app)
+	assert !active.command_mode
+	assert !active.rows.any(it.chars.bytestr().contains('^['))
 }
 
 fn test_tui_key_to_editor_key_ctrl_letters() {

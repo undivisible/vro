@@ -138,6 +138,7 @@ mut:
 	en       regex.RE
 	sk       regex.RE
 	has_skip bool
+	end_line bool
 }
 
 enum CompRuleKind {
@@ -326,6 +327,7 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 						en:       en
 						sk:       skre
 						has_skip: hsk
+						end_line: r.en == '$'
 					}
 				}
 			}
@@ -476,10 +478,13 @@ fn group_to_ansi(group string) string {
 
 // Find end pattern from search (same skip rules as micro-style regions).
 fn hl_region_find_end(mut cr CompiledReg, line string, search int) int {
+	if cr.end_line {
+		return line.len
+	}
 	mut s := search
 	for s <= line.len {
 		es2, ee2 := cr.en.find_from(line, s)
-		if es2 >= 0 && ee2 > es2 {
+		if es2 >= 0 && ee2 >= es2 {
 			return ee2
 		}
 		if cr.has_skip {

@@ -107,6 +107,20 @@ mut:
 	mark string
 }
 
+struct PaneRect {
+mut:
+	row    int
+	col    int
+	width  int
+	height int
+}
+
+struct ScreenCursor {
+mut:
+	row int
+	col int
+}
+
 struct EditorConfig {
 mut:
 	cx                    int
@@ -1099,6 +1113,91 @@ fn editor_build_screen(mut e EditorConfig) string {
 	ab.write_string('\x1b[${cursor_y};${cursor_x}H')
 	ab.write_string('\x1b[?25h')
 	return ab.str()
+}
+
+fn term_move(row int, col int) string {
+	return '\x1b[${row};${col}H'
+}
+
+fn editor_draw_at(mut e EditorConfig, mut ab strings.Builder, rect PaneRect) ScreenCursor {
+	if rect.width < 1 || rect.height < 1 {
+		return ScreenCursor{
+			row: rect.row
+			col: rect.col
+		}
+	}
+	e.screencols = rect.width
+	e.screenrows = rect.height - 1
+	if e.screenrows < 1 {
+		e.screenrows = 1
+	}
+	editor_scroll(mut e)
+	editor_ensure_syntax(mut e)
+	editor_ensure_hl_carry(mut e)
+	for y in 0 .. e.screenrows {
+		ab.write_string(term_move(rect.row + y, rect.col))
+		filerow := y + e.rowoff
+		editor_append_line_gutter(e, mut ab, filerow)
+		mut used := editor_line_gutter_width(e)
+		if filerow < e.rows.len {
+			render := e.rows[filerow].render.bytestr()
+			mut len := render.len - e.coloff
+			if len < 0 {
+				len = 0
+			}
+			text_cols := editor_text_screencols(e)
+			if len > text_cols {
+				len = text_cols
+			}
+			if len > 0 {
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
+				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
+				} else {
+					visible_start := e.coloff
+					visible_end := e.coloff + len
+					left_end := if sel_start > visible_start { sel_start } else { visible_start }
+					right_start := if sel_end < visible_end { sel_end } else { visible_end }
+					editor_append_line_slice(mut e, mut ab, render, filerow, visible_start,
+						left_end - visible_start, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, left_end,
+						right_start - left_end, true)
+					editor_append_line_slice(mut e, mut ab, render, filerow, right_start,
+						visible_end - right_start, false)
+				}
+				used += len
+			}
+		}
+		for _ in used .. rect.width {
+			ab.write_u8(` `)
+		}
+	}
+	ab.write_string(term_move(rect.row + e.screenrows, rect.col))
+	editor_draw_status_bar(mut e, mut ab)
+	mut cursor_y := rect.row + (e.cy - e.rowoff)
+	mut cursor_x := rect.col + editor_line_gutter_width(e) + (e.rx - e.coloff)
+	if e.command_mode {
+		cursor_y = rect.row + e.screenrows
+		cursor_x = rect.col + editor_footer_caret_column(mut e) - 1
+	}
+	if cursor_y < rect.row {
+		cursor_y = rect.row
+	}
+	if cursor_y > rect.row + rect.height - 1 {
+		cursor_y = rect.row + rect.height - 1
+	}
+	if cursor_x < rect.col {
+		cursor_x = rect.col
+	}
+	if cursor_x > rect.col + rect.width - 1 {
+		cursor_x = rect.col + rect.width - 1
+	}
+	return ScreenCursor{
+		row: cursor_y
+		col: cursor_x
+	}
 }
 
 fn editor_set_status_message(mut e EditorConfig, msg string) {
@@ -2496,6 +2595,114 @@ fn app_sync_terminal_size(mut app VroApp, width int, height int) {
 	}
 }
 
+fn app_layout_rects(app VroApp) []PaneRect {
+	width := if app.screencols < 1 { 1 } else { app.screencols }
+	height := if app.screenrows < 1 { 1 } else { app.screenrows }
+	if app.panes.len <= 1 {
+		return [
+			PaneRect{
+				row:    1
+				col:    1
+				width:  width
+				height: height
+			},
+		]
+	}
+	if app.panes.len == 2 {
+		second := app.panes[1].split
+		match second {
+			.right {
+				left_w := width / 2
+				right_w := width - left_w
+				return [
+					PaneRect{
+						row:    1
+						col:    1
+						width:  left_w
+						height: height
+					},
+					PaneRect{
+						row:    1
+						col:    left_w + 1
+						width:  right_w
+						height: height
+					},
+				]
+			}
+			.left {
+				left_w := width / 2
+				right_w := width - left_w
+				return [
+					PaneRect{
+						row:    1
+						col:    left_w + 1
+						width:  right_w
+						height: height
+					},
+					PaneRect{
+						row:    1
+						col:    1
+						width:  left_w
+						height: height
+					},
+				]
+			}
+			.top {
+				top_h := height / 2
+				bottom_h := height - top_h
+				return [
+					PaneRect{
+						row:    top_h + 1
+						col:    1
+						width:  width
+						height: bottom_h
+					},
+					PaneRect{
+						row:    1
+						col:    1
+						width:  width
+						height: top_h
+					},
+				]
+			}
+			else {
+				top_h := height / 2
+				bottom_h := height - top_h
+				return [
+					PaneRect{
+						row:    1
+						col:    1
+						width:  width
+						height: top_h
+					},
+					PaneRect{
+						row:    top_h + 1
+						col:    1
+						width:  width
+						height: bottom_h
+					},
+				]
+			}
+		}
+	}
+	mut rects := []PaneRect{}
+	mut remaining := height
+	for pi in 0 .. app.panes.len {
+		mut pane_h := remaining / (app.panes.len - pi)
+		if pane_h < 1 {
+			pane_h = 1
+		}
+		rects << PaneRect{
+			row:    height - remaining + 1
+			col:    1
+			width:  width
+			height: pane_h
+		}
+		remaining -= pane_h
+	}
+	return rects
+}
+
 fn app_build_screen(mut app VroApp) string {
 	vro_app_ensure_default_buffer(mut app)
 	if app.panes.len <= 1 {
@@ -2505,26 +2712,22 @@ fn app_build_screen(mut app VroApp) string {
 	}
 	mut ab := strings.new_builder(4096)
 	ab.write_string('\x1b[?25l')
-	ab.write_string('\x1b[H')
-	mut remaining := app.screenrows
+	ab.write_string('\x1b[H\x1b[J')
+	rects := app_layout_rects(app)
+	mut cursor := ScreenCursor{
+		row: 1
+		col: 1
+	}
 	for pi, pane in app.panes {
-		mut pane_rows := remaining / (app.panes.len - pi)
-		if pane_rows < 2 {
-			pane_rows = 2
-		}
-		if pane_rows > remaining {
-			pane_rows = remaining
-		}
-		remaining -= pane_rows
 		idx := if pane.buffer >= 0 && pane.buffer < app.buffers.len { pane.buffer } else { 0 }
-		app.buffers[idx].screenrows = pane_rows - 1
-		app.buffers[idx].screencols = app.screencols
-		editor_draw_rows(mut app.buffers[idx], mut ab)
-		editor_draw_status_bar(mut app.buffers[idx], mut ab)
-		if pi != app.panes.len - 1 {
-			ab.write_string('\r\n')
+		if pi < rects.len {
+			next_cursor := editor_draw_at(mut app.buffers[idx], mut ab, rects[pi])
+			if pi == app.active_pane {
+				cursor = next_cursor
+			}
 		}
 	}
+	ab.write_string(term_move(cursor.row, cursor.col))
 	ab.write_string('\x1b[?25h')
 	return ab.str()
 }
