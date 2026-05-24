@@ -125,7 +125,8 @@ struct YamlRule {
 }
 
 struct CompiledPat {
-	group string
+	group         string
+	word_boundary bool
 mut:
 	re regex.RE
 }
@@ -213,6 +214,16 @@ fn compile_one_re(pat string) !regex.RE {
 	return re
 }
 
+fn is_syntax_word_byte(b u8) bool {
+	return (b >= `a` && b <= `z`) || (b >= `A` && b <= `Z`) || (b >= `0` && b <= `9`) || b == `_`
+}
+
+fn is_syntax_word_boundary(line string, pos int) bool {
+	left := pos > 0 && is_syntax_word_byte(line[pos - 1])
+	right := pos < line.len && is_syntax_word_byte(line[pos])
+	return left != right
+}
+
 fn compile_maybe_re(pat string) ?regex.RE {
 	p2 := pat.replace('\\b', '')
 	p3 := patch_v_regex(p2)
@@ -288,8 +299,9 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 						kind:  .pat
 						group: r.group
 						pat:   CompiledPat{
-							group: r.group
-							re:    re
+							group:         r.group
+							word_boundary: part.contains('\\b')
+							re:            re
 						}
 					}
 				}
@@ -590,6 +602,11 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 		}
 		if en <= st {
 			pos++
+			continue
+		}
+		if cp.word_boundary && (!is_syntax_word_boundary(line, st)
+			|| !is_syntax_word_boundary(line, en)) {
+			pos = en
 			continue
 		}
 		for k := st; k < en && k < line.len; k++ {

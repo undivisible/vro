@@ -151,6 +151,27 @@ fn test_local_syntax_reports_source() {
 	assert syn.source == os.join_path(dir, 'v.yaml')
 }
 
+fn syntax_group_at(mut syn CompiledSyntax, line string, needle string) string {
+	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
+	at := line.index(needle) or { panic('missing needle ${needle}') }
+	for i in at .. at + needle.len {
+		if i < owners.len && owners[i] != -1 {
+			return groups[i]
+		}
+	}
+	return ''
+}
+
+fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", 'vro_version') == ''
+	assert syntax_group_at(mut syn, 'const key_arrow_left = 1000', 'key_arrow_left') == ''
+	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
+	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
+}
+
 fn test_ui_sanitize_display() {
 	assert ui_sanitize_display('') == ''
 	esc := 'a' + u8(0x1b).ascii_str() + 'b'
@@ -670,6 +691,132 @@ fn test_dirty_open_requires_bang() {
 	assert editor_run_command(mut e, 'open! ${path2}')
 	assert e.filename == path2
 	assert editor_rows_to_string(e) == 'two'
+}
+
+fn test_app_open_args_loads_multiple_buffers() {
+	path1 := os.join_path(os.temp_dir(), 'vro-args-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-args-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1, path2])
+	assert app.buffers.len == 2
+	assert app.panes.len == 1
+	assert app.panes[0].buffer == 0
+	assert app.buffers[1].filename == path2
+}
+
+fn test_app_split_commands_open_files_in_new_panes() {
+	path1 := os.join_path(os.temp_dir(), 'vro-split-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-split-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	assert app.buffers.len == 2
+	assert app.panes.len == 2
+	assert app.active_pane == 1
+	assert app.panes[1].buffer == 1
+	assert app.panes[1].split == .right
+	assert app.buffers[1].filename == path2
+}
+
+fn test_app_buffer_switching_and_close() {
+	path1 := os.join_path(os.temp_dir(), 'vro-buffer-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-buffer-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1, path2])
+	assert app_run_command(mut app, 'buffer 2')
+	assert app.panes[0].buffer == 1
+	assert app_run_command(mut app, 'bprev')
+	assert app.panes[0].buffer == 0
+	assert app_run_command(mut app, 'bnext')
+	assert app.panes[0].buffer == 1
+	assert app_run_command(mut app, 'close')
+	assert app.panes.len == 1
+	assert app.buffers.len == 2
+}
+
+fn test_app_terminal_split_command_reports_unsupported() {
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, []string{})
+	assert app_run_command(mut app, 'top zsh')
+	active := app_active_editor(mut app)
+	assert active.statusmsg == 'Terminal panes are not supported yet'
+	assert app.panes.len == 1
+}
+
+fn test_parse_git_diff_marks_added_modified_and_deleted_lines() {
+	diff := 'diff --git a/a.txt b/a.txt
+@@ -1,3 +1,4 @@
+ one
+-two
++too
++three
+ four
+@@ -8,2 +9,0 @@
+-gone
+-also gone
+'
+	marks := parse_git_diff_marks(diff)
+	assert git_mark_for_line(marks, 2) == '~'
+	assert git_mark_for_line(marks, 3) == '+'
+	assert git_mark_for_line(marks, 9) == '-'
+}
+
+fn test_parse_git_diff_marks_empty_for_no_diff() {
+	assert parse_git_diff_marks('').len == 0
+	assert parse_git_diff_marks('not a diff').len == 0
+}
+
+fn test_split_screen_renders_multiple_filenames() {
+	path1 := os.join_path(os.temp_dir(), 'vro-render-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-render-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'bottom ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains(path1)
+	assert out.contains(path2)
 }
 
 fn test_tui_key_to_editor_key_ctrl_letters() {

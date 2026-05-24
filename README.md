@@ -8,7 +8,8 @@ A small `micro`-inspired terminal text editor written in V.
 
 ## Features
 
-- Open files from argv
+- Open multiple files from argv
+- Split files into left/right/top/bottom panes
 - Insert and delete text
 - Arrow/home/end/page navigation
 - Save with `Ctrl-S`
@@ -16,12 +17,13 @@ A small `micro`-inspired terminal text editor written in V.
 - Command bar with `Ctrl-E`
 - Line numbers in the left gutter
 - Dirty-file quit protection with `Ctrl-Q`
+- Read-only git gutter marks for changed files
 - Micro-style **YAML** syntax highlighting (V regex engine; see `syntax/`)
 
 ## Run
 
 ```sh
-v -gc none run . [file]
+v -gc none run . [file ...]
 ```
 
 
@@ -29,7 +31,7 @@ v -gc none run . [file]
 
 ```sh
 v -gc none -prod -o vro .
-./vro [file]
+./vro [file ...]
 ```
 
 ## Test
@@ -111,6 +113,11 @@ After you publish a release tag (e.g. `v1.0.0`), refresh the tap: `./scripts/pri
 Press `Ctrl-E`, then type a command:
 
 - `open <path>` or `o <path>` (`open!` / `o!` discards unsaved changes)
+- `right <path>` / `left <path>` / `top <path>` / `bottom <path>` opens a file in a split
+- `buffer <n|path>` or `b <n|path>` switches the active pane to an open buffer
+- `bnext` / `bn` and `bprev` / `bp` cycle buffers in the active pane
+- `close` closes the active split pane
+- `git refresh` refreshes read-only gutter marks
 - `write` / `w` / `save` (or pass a path: `write <path>`)
 - `saveas <path>`
 - `find <text>` (or just `find` for interactive search)
@@ -118,6 +125,8 @@ Press `Ctrl-E`, then type a command:
 - `quit` / `q` / `exit` / `x` (or `quit!` / `exit!` / `x!` to discard)
 - `wq` — save and quit
 - `help`
+
+Terminal panes are not implemented yet; commands such as `top zsh` report that limitation instead of starting a shell.
 
 ## License
 
