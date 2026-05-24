@@ -730,7 +730,7 @@ fn editor_text_screencols(e EditorConfig) int {
 }
 
 fn editor_append_line_gutter(e EditorConfig, mut ab strings.Builder, filerow int) {
-	width := editor_line_gutter_width(e) - 1
+	width := editor_line_gutter_width(e) - 2
 	mut label := ''
 	if filerow < e.rows.len {
 		label = (filerow + 1).str()
@@ -738,16 +738,29 @@ fn editor_append_line_gutter(e EditorConfig, mut ab strings.Builder, filerow int
 	for _ in label.len .. width {
 		ab.write_u8(` `)
 	}
-	mark := git_mark_for_line(e.git_marks, filerow + 1)
 	ab.write_string('\x1b[90m')
 	ab.write_string(label)
+	ab.write_string('\x1b[0m')
+	mark := git_mark_for_line(e.git_marks, filerow + 1)
 	if mark.len > 0 {
-		ab.write_string(mark)
+		match mark {
+			'+' {
+				ab.write_string('\x1b[42m \x1b[0m')
+			}
+			'~' {
+				ab.write_string('\x1b[43m \x1b[0m')
+			}
+			'-' {
+				ab.write_string('\x1b[41m \x1b[0m')
+			}
+			else {
+				ab.write_u8(` `)
+			}
+		}
 	} else {
 		ab.write_u8(` `)
 	}
 	ab.write_u8(` `)
-	ab.write_string('\x1b[0m')
 }
 
 fn editor_find_literal(mut e EditorConfig, query string) bool {

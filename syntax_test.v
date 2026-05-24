@@ -4,6 +4,26 @@ import os
 import strings
 import term.ui as tui
 
+fn strip_ansi(s string) string {
+	mut out := strings.new_builder(s.len)
+	mut i := 0
+	for i < s.len {
+		if s[i] == 0x1b && i + 1 < s.len && s[i + 1] == `[` {
+			i += 2
+			for i < s.len && !((s[i] >= `A` && s[i] <= `Z`) || (s[i] >= `a` && s[i] <= `z`)) {
+				i++
+			}
+			if i < s.len {
+				i++
+			}
+			continue
+		}
+		out.write_u8(s[i])
+		i++
+	}
+	return out.str()
+}
+
 fn test_vro_version() {
 	assert vro_version == '1.0.5'
 }
@@ -170,6 +190,7 @@ fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
 	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
 	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
+	assert syntax_group_at(mut syn, 'mut _ := value', '_') == ''
 	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '<') == 'symbol.operator'
 	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '||') == 'symbol.operator'
 }
@@ -776,6 +797,50 @@ fn test_app_buffer_switching_and_close() {
 	assert app.buffers.len == 2
 }
 
+fn test_open_command_replaces_only_active_split_buffer() {
+	path1 := os.join_path(os.temp_dir(), 'vro-active-open-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-active-open-two.txt')
+	path3 := os.join_path(os.temp_dir(), 'vro-active-open-three.txt')
+	defer {
+		for path in [path1, path2, path3] {
+			if os.exists(path) {
+				os.rm(path) or {}
+			}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	os.write_file(path3, 'replacement')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	assert app_run_command(mut app, 'open ${path3}')
+	assert app.buffers[app.panes[0].buffer].filename == path3
+	assert app.buffers[app.panes[1].buffer].filename == path2
+}
+
+fn test_git_refresh_reports_on_active_pane_only() {
+	path1 := os.join_path(os.temp_dir(), 'vro-active-git-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-active-git-two.txt')
+	defer {
+		for path in [path1, path2] {
+			if os.exists(path) {
+				os.rm(path) or {}
+			}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 1
+	assert app_run_command(mut app, 'git refresh')
+	assert app.buffers[app.panes[1].buffer].statusmsg == 'Git gutter refresh is disabled'
+	assert app.buffers[app.panes[0].buffer].statusmsg != 'Git gutter refresh is disabled'
+}
+
 fn test_app_terminal_split_command_reports_unsupported() {
 	mut app := vro_app_new()
 	vro_app_open_args(mut app, []string{})
@@ -806,6 +871,65 @@ fn test_parse_git_diff_marks_added_modified_and_deleted_lines() {
 fn test_parse_git_diff_marks_empty_for_no_diff() {
 	assert parse_git_diff_marks('').len == 0
 	assert parse_git_diff_marks('not a diff').len == 0
+}
+
+fn test_gutter_width_matches_rendered_columns_without_git_mark() {
+	mut e := EditorConfig{
+		rows: [
+			Erow{
+				chars:  'alpha'.bytes()
+				render: 'alpha'.bytes()
+			},
+		]
+	}
+	mut ab := strings.new_builder(32)
+	editor_append_line_gutter(e, mut ab, 0)
+	assert strip_ansi(ab.str()).len == editor_line_gutter_width(e)
+}
+
+fn test_gutter_git_marks_render_as_background_cell() {
+	mut e := EditorConfig{
+		rows:      [
+			Erow{
+				chars:  'alpha'.bytes()
+				render: 'alpha'.bytes()
+			},
+		]
+		git_marks: [
+			GitGutterMark{
+				line: 1
+				mark: '+'
+			},
+		]
+	}
+	mut ab := strings.new_builder(32)
+	editor_append_line_gutter(e, mut ab, 0)
+	out := ab.str()
+	assert strip_ansi(out).len == editor_line_gutter_width(e)
+	assert !strip_ansi(out).contains('+')
+	assert out.contains('\x1b[42m \x1b[0m')
+}
+
+fn test_split_cursor_matches_first_text_column_after_gutter() {
+	mut row := Erow{
+		chars:  'alpha'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:       [row]
+		screenrows: 4
+		screencols: 20
+	}
+	mut ab := strings.new_builder(128)
+	cursor := editor_draw_at(mut e, mut ab, PaneRect{
+		row:    1
+		col:    1
+		width:  20
+		height: 5
+	})
+	assert cursor.col == 1 + editor_line_gutter_width(e)
+	assert strip_ansi(ab.str()).contains('1  alpha')
 }
 
 fn test_split_screen_renders_multiple_filenames() {
