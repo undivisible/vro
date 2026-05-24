@@ -10,6 +10,7 @@ const vro_version = '1.0.5'
 
 const tab_stop = 4
 const quit_times = 3
+const tui_buffer_size = 262144
 
 const key_arrow_left = 1000
 const key_arrow_right = 1001
@@ -698,31 +699,6 @@ fn git_mark_for_line(marks []GitGutterMark, line int) string {
 
 fn editor_refresh_git_marks(mut e EditorConfig) {
 	e.git_marks = []GitGutterMark{}
-	if e.filename.len == 0 {
-		return
-	}
-	dir := os.dir(e.filename)
-	base := os.base(e.filename)
-	inside := os.execute('git -C "${dir}" rev-parse --is-inside-work-tree')
-	if inside.exit_code != 0 {
-		return
-	}
-	tracked := os.execute('git -C "${dir}" ls-files --error-unmatch -- "${base}"')
-	if tracked.exit_code != 0 {
-		mut marks := []GitGutterMark{}
-		for i in 0 .. e.rows.len {
-			marks << GitGutterMark{
-				line: i + 1
-				mark: '+'
-			}
-		}
-		e.git_marks = marks
-		return
-	}
-	diff := os.execute('git -C "${dir}" diff --unified=0 -- "${base}"')
-	if diff.exit_code == 0 {
-		e.git_marks = parse_git_diff_marks(diff.output)
-	}
 }
 
 @[inline]
@@ -2561,10 +2537,7 @@ fn app_run_command(mut app VroApp, input string) bool {
 		}
 		'git' {
 			if args == 'refresh' || args.len == 0 {
-				for i in 0 .. app.buffers.len {
-					editor_refresh_git_marks(mut app.buffers[i])
-				}
-				app_set_status_message(mut app, 'Git gutter refreshed')
+				app_set_status_message(mut app, 'Git gutter refresh is disabled')
 			} else {
 				app_set_status_message(mut app, 'Usage: git refresh')
 			}
@@ -3230,7 +3203,7 @@ fn main() {
 		window_title:         'vro'
 		hide_cursor:          false
 		capture_events:       true
-		buffer_size:          4096
+		buffer_size:          tui_buffer_size
 		frame_rate:           120
 		use_alternate_buffer: true
 	)

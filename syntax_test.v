@@ -831,6 +831,35 @@ fn test_split_screen_renders_multiple_filenames() {
 	assert out.contains(path2)
 }
 
+fn test_split_screen_fits_tui_buffer() {
+	path1 := os.join_path(os.temp_dir(), 'vro-buffer-frame-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-buffer-frame-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	mut left := ''
+	mut right := ''
+	for i in 0 .. 80 {
+		left += 'left line ${i} with enough text to fill a typical pane width\n'
+		right += 'right line ${i} with enough text to fill a typical pane width\n'
+	}
+	os.write_file(path1, left)!
+	os.write_file(path2, right)!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 160
+	app.screenrows = 48
+	assert app_run_command(mut app, 'right ${path2}')
+	out := app_build_screen(mut app)
+	assert out.len < tui_buffer_size
+	assert out.len > 4096
+}
+
 fn test_right_split_renders_second_pane_on_same_row() {
 	path1 := os.join_path(os.temp_dir(), 'vro-right-one.txt')
 	path2 := os.join_path(os.temp_dir(), 'vro-right-two.txt')
