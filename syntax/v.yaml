@@ -18,7 +18,8 @@ rules:
 
     - identifier.class: "\\b([A-Z][A-Za-z0-9_]*)\\b"
     - identifier.function: "\\b([a-z_]+\\()"
-    - symbol.operator: "\\b(i[ns])\\b|[-+/*<>!=~*%&:|,.?]"
+    - symbol.operator: "\\b(i[ns])\\b"
+    - symbol.operator: "[-+/*<>!=~*%&:|,.?]"
     - symbol.attribute:
         start: "^\\["
         end: "\\]$"

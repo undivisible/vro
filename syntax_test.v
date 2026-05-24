@@ -170,6 +170,8 @@ fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
 	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
 	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
+	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '<') == 'symbol.operator'
+	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '||') == 'symbol.operator'
 }
 
 fn test_bundled_v_line_comment_region_does_not_carry() {
@@ -602,11 +604,11 @@ fn test_mouse_wheel_scrolls_without_dirtying() {
 	}
 	editor_scroll_mouse(mut e, .down)
 	assert e.rowoff == 1
-	assert e.cy == 0
+	assert e.cy == 1
 	assert e.dirty == 0
 	editor_scroll_mouse(mut e, .up)
 	assert e.rowoff == 0
-	assert e.cy == 0
+	assert e.cy == 1
 	assert e.dirty == 0
 }
 
@@ -901,6 +903,83 @@ fn test_split_command_escape_cancels_command_mode() {
 	active := app_active_editor(mut app)
 	assert !active.command_mode
 	assert !active.rows.any(it.chars.bytestr().contains('^['))
+}
+
+fn test_mouse_scroll_moves_view_without_clicking_first() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	for _ in 0 .. 4 {
+		editor_scroll_mouse(mut e, .down)
+		editor_scroll(mut e)
+	}
+	assert e.rowoff == 4
+	assert e.cy == 4
+}
+
+fn test_mouse_click_in_right_split_focuses_second_editor() {
+	path1 := os.join_path(os.temp_dir(), 'vro-focus-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-focus-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	app_mouse_down(mut app, 1, 45, false)
+	assert app.active_pane == 1
+	assert app_active_editor(mut app).filename == path2
+}
+
+fn test_mouse_scroll_over_right_split_scrolls_second_editor() {
+	path1 := os.join_path(os.temp_dir(), 'vro-scroll-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-scroll-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left')!
+	mut content := ''
+	for i in 0 .. 20 {
+		content += 'right${i}\n'
+	}
+	os.write_file(path2, content)!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	app_mouse_scroll(mut app, 1, 45, .down)
+	assert app.active_pane == 1
+	assert app.buffers[1].rowoff == 1
+	assert app.buffers[0].rowoff == 0
 }
 
 fn test_tui_key_to_editor_key_ctrl_letters() {

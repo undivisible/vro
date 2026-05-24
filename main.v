@@ -121,6 +121,14 @@ mut:
 	col int
 }
 
+struct MouseTarget {
+mut:
+	pane      int
+	local_row int
+	local_col int
+	rect      PaneRect
+}
+
 struct EditorConfig {
 mut:
 	cx                    int
@@ -2172,11 +2180,17 @@ fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 		.down {
 			if e.rowoff + e.screenrows < e.rows.len {
 				e.rowoff++
+				if e.cy < e.rowoff {
+					e.cy = e.rowoff
+				}
 			}
 		}
 		.up {
 			if e.rowoff > 0 {
 				e.rowoff--
+				if e.cy >= e.rowoff + e.screenrows {
+					e.cy = e.rowoff + e.screenrows - 1
+				}
 			}
 		}
 		.left {
@@ -2732,6 +2746,81 @@ fn app_build_screen(mut app VroApp) string {
 	return ab.str()
 }
 
+fn app_pane_at(app VroApp, row int, col int) (int, PaneRect) {
+	rects := app_layout_rects(app)
+	for i, rect in rects {
+		if row >= rect.row && row < rect.row + rect.height && col >= rect.col
+			&& col < rect.col + rect.width {
+			return i, rect
+		}
+	}
+	if app.active_pane >= 0 && app.active_pane < rects.len {
+		return app.active_pane, rects[app.active_pane]
+	}
+	if rects.len > 0 {
+		return 0, rects[0]
+	}
+	return 0, PaneRect{
+		row:    1
+		col:    1
+		width:  app.screencols
+		height: app.screenrows
+	}
+}
+
+fn app_local_mouse(app VroApp, row int, col int) MouseTarget {
+	pane, rect := app_pane_at(app, row, col)
+	local_row := row - rect.row + 1
+	local_col := col - rect.col + 1
+	return MouseTarget{
+		pane:      pane
+		local_row: local_row
+		local_col: local_col
+		rect:      rect
+	}
+}
+
+fn app_prepare_mouse_editor(mut app VroApp, pane int, rect PaneRect) int {
+	if pane >= 0 && pane < app.panes.len {
+		app.active_pane = pane
+	}
+	idx := app_active_buffer_index(app)
+	app.buffers[idx].screencols = rect.width
+	app.buffers[idx].screenrows = rect.height - 1
+	if app.buffers[idx].screenrows < 1 {
+		app.buffers[idx].screenrows = 1
+	}
+	return idx
+}
+
+fn app_mouse_down(mut app VroApp, row int, col int, extend bool) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_begin_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		extend)
+}
+
+fn app_mouse_drag(mut app VroApp, row int, col int) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		false)
+}
+
+fn app_mouse_up(mut app VroApp, row int, col int) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		false)
+	editor_end_mouse_selection(mut app.buffers[idx])
+}
+
+fn app_mouse_scroll(mut app VroApp, row int, col int, dir tui.Direction) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_scroll_mouse(mut app.buffers[idx], dir)
+}
+
 fn app_process_key(mut app VroApp, key int, text string) bool {
 	idx := app_active_buffer_index(app)
 	keep := editor_process_key(mut app.buffers[idx], key, text)
@@ -3006,22 +3095,18 @@ fn vro_event(ev &tui.Event, x voidptr) {
 		}
 		.mouse_down {
 			if ev.button == .left {
-				idx := app_active_buffer_index(app)
-				editor_begin_mouse_selection(mut app.buffers[idx], ev.y, ev.x, ev.modifiers.has(.shift))
+				app_mouse_down(mut app, ev.y, ev.x, ev.modifiers.has(.shift))
 				app.needs_redraw = true
 			}
 		}
 		.mouse_drag {
 			if ev.button == .left {
-				idx := app_active_buffer_index(app)
-				editor_drag_mouse_selection(mut app.buffers[idx], ev.y, ev.x, false)
+				app_mouse_drag(mut app, ev.y, ev.x)
 				app.needs_redraw = true
 			}
 		}
 		.mouse_up {
-			idx := app_active_buffer_index(app)
-			editor_drag_mouse_selection(mut app.buffers[idx], ev.y, ev.x, false)
-			editor_end_mouse_selection(mut app.buffers[idx])
+			app_mouse_up(mut app, ev.y, ev.x)
 			app.needs_redraw = true
 		}
 		.mouse_scroll {
@@ -3031,8 +3116,7 @@ fn vro_event(ev &tui.Event, x voidptr) {
 			if dir == .unknown {
 				dir = ev.direction
 			}
-			idx := app_active_buffer_index(app)
-			editor_scroll_mouse(mut app.buffers[idx], dir)
+			app_mouse_scroll(mut app, ev.y, ev.x, dir)
 			app.needs_redraw = true
 		}
 		.resized {
