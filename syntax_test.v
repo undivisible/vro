@@ -399,6 +399,62 @@ fn test_ctrl_u_deletes_to_line_start() {
 	assert e.cx == 0
 }
 
+fn test_ctrl_c_v_x_internal_clipboard() {
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              5
+		quit_times_left: quit_times
+	}
+	editor_set_selection(mut e, CursorPos{
+		cy: 0
+		cx: 0
+	}, CursorPos{
+		cy: 0
+		cx: 5
+	})
+	assert editor_process_key(mut e, ctrl_key(`c`), '')
+	assert e.clipboard == 'alpha'
+	assert e.rows[0].chars.bytestr() == 'alpha beta'
+	editor_clear_selection(mut e)
+	e.cx = e.rows[0].chars.len
+	assert editor_process_key(mut e, ctrl_key(`v`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha betaalpha'
+	editor_set_selection(mut e, CursorPos{
+		cy: 0
+		cx: 6
+	}, CursorPos{
+		cy: 0
+		cx: 10
+	})
+	assert editor_process_key(mut e, ctrl_key(`x`), '')
+	assert e.clipboard == 'beta'
+	assert e.rows[0].chars.bytestr() == 'alpha alpha'
+}
+
+fn test_ctrl_z_and_ctrl_y_undo_redo_edit() {
+	mut row := Erow{
+		chars:  'alpha'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              5
+		quit_times_left: quit_times
+	}
+	assert editor_process_key(mut e, 0, '!')
+	assert e.rows[0].chars.bytestr() == 'alpha!'
+	assert editor_process_key(mut e, ctrl_key(`z`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha'
+	assert editor_process_key(mut e, ctrl_key(`y`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha!'
+}
+
 fn test_mouse_click_respects_horizontal_scroll() {
 	mut row := Erow{
 		chars:  '0123456789abcdef'.bytes()
@@ -625,11 +681,11 @@ fn test_mouse_wheel_scrolls_without_dirtying() {
 	}
 	editor_scroll_mouse(mut e, .down)
 	assert e.rowoff == 1
-	assert e.cy == 1
+	assert e.cy == 0
 	assert e.dirty == 0
 	editor_scroll_mouse(mut e, .up)
 	assert e.rowoff == 0
-	assert e.cy == 1
+	assert e.cy == 0
 	assert e.dirty == 0
 }
 
@@ -1079,7 +1135,52 @@ fn test_mouse_scroll_moves_view_without_clicking_first() {
 		editor_scroll(mut e)
 	}
 	assert e.rowoff == 4
-	assert e.cy == 4
+	assert e.cy == 0
+}
+
+fn test_mouse_scroll_does_not_pin_cursor_to_top() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	for _ in 0 .. 4 {
+		editor_scroll_mouse(mut e, .down)
+	}
+	assert e.rowoff == 4
+	assert e.cy == 0
+}
+
+fn test_editor_hides_cursor_when_caret_scrolled_offscreen() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:          rows
+		screenrows:    5
+		screencols:    40
+		rowoff:        4
+		cy:            0
+		follow_cursor: false
+	}
+	out := editor_build_screen(mut e)
+	assert !out.contains('\x1b[?25h')
 }
 
 fn test_mouse_click_in_right_split_focuses_second_editor() {

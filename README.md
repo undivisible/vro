@@ -99,6 +99,8 @@ After you publish a release tag (e.g. `v1.0.0`), refresh the tap: `./scripts/pri
 - `Ctrl-F`: search
 - `Ctrl-E`: command bar
 - `Ctrl-N`: cycle buffer word completions (longer words sharing prefix)
+- `Ctrl-C` / `Ctrl-X` / `Ctrl-V`: copy, cut, and paste with vro's internal clipboard
+- `Ctrl-Z` / `Ctrl-Y`: undo and redo
 - `Tab`: indent with spaces; on `.html`/`.htm` buffers, expands a lone tag at end-of-line (emmet-lite)
 - `Backspace` / `Delete`: delete character, or delete selected text
 - `Ctrl-Delete`: delete next word

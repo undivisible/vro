@@ -118,8 +118,9 @@ mut:
 
 struct ScreenCursor {
 mut:
-	row int
-	col int
+	row     int
+	col     int
+	visible bool = true
 }
 
 struct MouseTarget {
@@ -195,6 +196,20 @@ mut:
 	last_click_ms     i64
 	click_count       int
 	git_marks         []GitGutterMark
+	clipboard         string
+	undo_stack        []EditorSnapshot
+	redo_stack        []EditorSnapshot
+	follow_cursor     bool = true
+}
+
+struct EditorSnapshot {
+	text        string
+	trailing_nl bool
+	cx          int
+	cy          int
+	rowoff      int
+	coloff      int
+	dirty       int
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -393,6 +408,55 @@ fn editor_set_cursor(mut e EditorConfig, pos CursorPos) {
 	p := editor_clamp_pos(e, pos)
 	e.cy = p.cy
 	e.cx = p.cx
+	e.follow_cursor = true
+}
+
+fn editor_snapshot(e EditorConfig) EditorSnapshot {
+	return EditorSnapshot{
+		text:        editor_rows_to_string(e)
+		trailing_nl: e.trailing_nl
+		cx:          e.cx
+		cy:          e.cy
+		rowoff:      e.rowoff
+		coloff:      e.coloff
+		dirty:       e.dirty
+	}
+}
+
+fn editor_restore_snapshot(mut e EditorConfig, snap EditorSnapshot) {
+	editor_load_buffer_content(mut e, snap.text)
+	e.trailing_nl = snap.trailing_nl
+	e.cx = snap.cx
+	e.cy = snap.cy
+	e.rowoff = snap.rowoff
+	e.coloff = snap.coloff
+	e.dirty = snap.dirty
+	e.follow_cursor = true
+	editor_clear_selection(mut e)
+}
+
+fn editor_undo(mut e EditorConfig) {
+	if e.undo_stack.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to undo')
+		return
+	}
+	current := editor_snapshot(e)
+	snap := e.undo_stack[e.undo_stack.len - 1]
+	e.undo_stack.delete(e.undo_stack.len - 1)
+	e.redo_stack << current
+	editor_restore_snapshot(mut e, snap)
+}
+
+fn editor_redo(mut e EditorConfig) {
+	if e.redo_stack.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to redo')
+		return
+	}
+	current := editor_snapshot(e)
+	snap := e.redo_stack[e.redo_stack.len - 1]
+	e.redo_stack.delete(e.redo_stack.len - 1)
+	e.undo_stack << current
+	editor_restore_snapshot(mut e, snap)
 }
 
 fn editor_update_selection_cursor(mut e EditorConfig) {
@@ -449,6 +513,70 @@ fn editor_delete_selection(mut e EditorConfig) bool {
 	e.dirty++
 	e.words_dirty = true
 	editor_hl_carry_invalidate(mut e)
+	return true
+}
+
+fn editor_selection_text(e EditorConfig) string {
+	start, end, ok := editor_selection_bounds(e)
+	if !ok {
+		if e.cy < e.rows.len {
+			return e.rows[e.cy].chars.bytestr()
+		}
+		return ''
+	}
+	mut out := strings.new_builder(64)
+	for row_idx in start.cy .. end.cy + 1 {
+		if row_idx >= e.rows.len {
+			break
+		}
+		row := e.rows[row_idx].chars.bytestr()
+		mut left := 0
+		mut right := row.len
+		if row_idx == start.cy {
+			left = start.cx
+		}
+		if row_idx == end.cy {
+			right = end.cx
+		}
+		if right < left {
+			right = left
+		}
+		out.write_string(row[left..right])
+		if row_idx != end.cy {
+			out.write_u8(`\n`)
+		}
+	}
+	return out.str()
+}
+
+fn editor_copy_selection(mut e EditorConfig) bool {
+	text := editor_selection_text(e)
+	if text.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to copy')
+		return false
+	}
+	e.clipboard = text
+	editor_set_status_message(mut e, 'Copied')
+	return true
+}
+
+fn editor_cut_selection(mut e EditorConfig) bool {
+	if !editor_copy_selection(mut e) {
+		return false
+	}
+	if e.selection_active {
+		ok := editor_delete_selection(mut e)
+		editor_clear_selection(mut e)
+		return ok
+	}
+	if e.cy >= e.rows.len {
+		return false
+	}
+	editor_del_row(mut e, e.cy)
+	if e.cy >= e.rows.len && e.cy > 0 {
+		e.cy--
+	}
+	e.cx = 0
 	return true
 }
 
@@ -870,18 +998,20 @@ fn editor_scroll(mut e EditorConfig) {
 	if e.cy < e.rows.len {
 		e.rx = editor_row_cx_to_rx(e.rows[e.cy], e.cx)
 	}
-	if e.cy < e.rowoff {
-		e.rowoff = e.cy
-	}
-	if e.cy >= e.rowoff + e.screenrows {
-		e.rowoff = e.cy - e.screenrows + 1
-	}
-	if e.rx < e.coloff {
-		e.coloff = e.rx
-	}
-	text_cols := editor_text_screencols(e)
-	if e.rx >= e.coloff + text_cols {
-		e.coloff = e.rx - text_cols + 1
+	if e.follow_cursor {
+		if e.cy < e.rowoff {
+			e.rowoff = e.cy
+		}
+		if e.cy >= e.rowoff + e.screenrows {
+			e.rowoff = e.cy - e.screenrows + 1
+		}
+		if e.rx < e.coloff {
+			e.coloff = e.rx
+		}
+		text_cols := editor_text_screencols(e)
+		if e.rx >= e.coloff + text_cols {
+			e.coloff = e.rx - text_cols + 1
+		}
 	}
 }
 
@@ -1097,9 +1227,12 @@ fn editor_build_screen(mut e EditorConfig) string {
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
 	mut cursor_x := editor_line_gutter_width(e) + (e.rx - e.coloff) + 1
+	mut cursor_visible := cursor_y >= 1 && cursor_y <= e.screenrows && cursor_x >= 1
+		&& cursor_x <= e.screencols
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
 		cursor_x = editor_footer_caret_column(mut e)
+		cursor_visible = true
 	}
 	if cursor_y < 1 {
 		cursor_y = 1
@@ -1107,8 +1240,10 @@ fn editor_build_screen(mut e EditorConfig) string {
 	if cursor_x < 1 {
 		cursor_x = 1
 	}
-	ab.write_string('\x1b[${cursor_y};${cursor_x}H')
-	ab.write_string('\x1b[?25h')
+	if cursor_visible {
+		ab.write_string('\x1b[${cursor_y};${cursor_x}H')
+		ab.write_string('\x1b[?25h')
+	}
 	return ab.str()
 }
 
@@ -1175,9 +1310,12 @@ fn editor_draw_at(mut e EditorConfig, mut ab strings.Builder, rect PaneRect) Scr
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := rect.row + (e.cy - e.rowoff)
 	mut cursor_x := rect.col + editor_line_gutter_width(e) + (e.rx - e.coloff)
+	mut cursor_visible := cursor_y >= rect.row && cursor_y < rect.row + e.screenrows
+		&& cursor_x >= rect.col && cursor_x < rect.col + rect.width
 	if e.command_mode {
 		cursor_y = rect.row + e.screenrows
 		cursor_x = rect.col + editor_footer_caret_column(mut e) - 1
+		cursor_visible = true
 	}
 	if cursor_y < rect.row {
 		cursor_y = rect.row
@@ -1192,8 +1330,9 @@ fn editor_draw_at(mut e EditorConfig, mut ab strings.Builder, rect PaneRect) Scr
 		cursor_x = rect.col + rect.width - 1
 	}
 	return ScreenCursor{
-		row: cursor_y
-		col: cursor_x
+		row:     cursor_y
+		col:     cursor_x
+		visible: cursor_visible
 	}
 }
 
@@ -2169,26 +2308,24 @@ fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 		.down {
 			if e.rowoff + e.screenrows < e.rows.len {
 				e.rowoff++
-				if e.cy < e.rowoff {
-					e.cy = e.rowoff
-				}
+				e.follow_cursor = false
 			}
 		}
 		.up {
 			if e.rowoff > 0 {
 				e.rowoff--
-				if e.cy >= e.rowoff + e.screenrows {
-					e.cy = e.rowoff + e.screenrows - 1
-				}
+				e.follow_cursor = false
 			}
 		}
 		.left {
 			if e.coloff > 0 {
 				e.coloff--
+				e.follow_cursor = false
 			}
 		}
 		.right {
 			e.coloff++
+			e.follow_cursor = false
 		}
 		.unknown {}
 	}
@@ -2225,7 +2362,11 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 
 fn editor_insert_text(mut e EditorConfig, text string) {
 	for b in text.bytes() {
-		editor_insert_char(mut e, b)
+		if b == `\n` {
+			editor_insert_newline(mut e)
+		} else if b != `\r` {
+			editor_insert_char(mut e, b)
+		}
 	}
 }
 
@@ -2241,9 +2382,34 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	if c == ctrl_key(`q`) {
 		return editor_handle_ctrl_q(mut e)
 	}
+	if c == ctrl_key(`z`) {
+		editor_undo(mut e)
+		return true
+	}
+	if c == ctrl_key(`y`) {
+		editor_redo(mut e)
+		return true
+	}
+	if c == ctrl_key(`c`) {
+		editor_copy_selection(mut e)
+		return true
+	}
+	snap_before := editor_snapshot(e)
+	text_before := snap_before.text
 	dirty_before := e.dirty
 	match c {
+		ctrl_key(`x`) {
+			editor_complete_reset(mut e)
+			editor_cut_selection(mut e)
+		}
+		ctrl_key(`v`) {
+			if e.clipboard.len > 0 {
+				editor_complete_reset(mut e)
+				editor_insert_text(mut e, e.clipboard)
+			}
+		}
 		int(`\r`), int(`\n`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
 		}
@@ -2259,19 +2425,23 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			}
 		}
 		ctrl_key(`n`) {
+			e.follow_cursor = true
 			editor_cycle_word_completion(mut e)
 		}
 		int(`\t`) {
+			e.follow_cursor = true
 			if !editor_try_emmet_tab(mut e) {
 				editor_insert_tab_or_spaces(mut e)
 			}
 		}
 		key_home {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			e.cx = 0
 		}
 		key_end {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			if e.cy < e.rows.len {
@@ -2280,6 +2450,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		}
 		ctrl_key(`l`), int(`\x1b`) {}
 		key_page_up, key_page_down {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			if c == key_page_up {
@@ -2299,11 +2470,13 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			}
 		}
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			editor_move_cursor(mut e, c)
 		}
 		key_shift_arrow_up, key_shift_arrow_down, key_shift_arrow_left, key_shift_arrow_right {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_begin_keyboard_selection(mut e)
 			editor_move_cursor(mut e, match c {
@@ -2315,6 +2488,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_update_selection_cursor(mut e)
 		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			if c == key_del && !e.selection_active {
 				editor_move_cursor(mut e, key_arrow_right)
@@ -2322,32 +2496,42 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_del_char(mut e)
 		}
 		key_delete_word_backward, ctrl_key(`w`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_word_backward(mut e)
 		}
 		key_delete_word_forward {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_word_forward(mut e)
 		}
 		key_delete_line {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_line_before_cursor(mut e)
 		}
 		ctrl_key(`u`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_line_before_cursor(mut e)
 		}
 		else {
 			if text.len > 0 {
+				e.follow_cursor = true
 				editor_complete_reset(mut e)
 				editor_insert_text(mut e, text)
 			} else if c >= 32 && c <= 126 {
+				e.follow_cursor = true
 				editor_complete_reset(mut e)
 				editor_insert_char(mut e, u8(c))
 			}
 		}
 	}
 
+	if editor_rows_to_string(e) != text_before {
+		e.undo_stack << snap_before
+		e.redo_stack = []EditorSnapshot{}
+	}
 	if e.dirty != dirty_before || e.dirty == 0 {
 		e.quit_times_left = quit_times
 	}
@@ -2715,8 +2899,9 @@ fn app_build_screen(mut app VroApp) string {
 	ab.write_string('\x1b[H\x1b[J')
 	rects := app_layout_rects(app)
 	mut cursor := ScreenCursor{
-		row: 1
-		col: 1
+		row:     1
+		col:     1
+		visible: false
 	}
 	for pi, pane in app.panes {
 		idx := if pane.buffer >= 0 && pane.buffer < app.buffers.len { pane.buffer } else { 0 }
@@ -2727,8 +2912,10 @@ fn app_build_screen(mut app VroApp) string {
 			}
 		}
 	}
-	ab.write_string(term_move(cursor.row, cursor.col))
-	ab.write_string('\x1b[?25h')
+	if cursor.visible {
+		ab.write_string(term_move(cursor.row, cursor.col))
+		ab.write_string('\x1b[?25h')
+	}
 	return ab.str()
 }
 
