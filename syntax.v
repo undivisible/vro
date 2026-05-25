@@ -127,6 +127,7 @@ struct YamlRule {
 struct CompiledPat {
 	group         string
 	word_boundary bool
+	start_line    bool
 mut:
 	re regex.RE
 }
@@ -389,6 +390,7 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 						pat:   CompiledPat{
 							group:         r.group
 							word_boundary: part.contains('\\b')
+							start_line:    part.starts_with('^')
 							re:            re
 						}
 					}
@@ -694,6 +696,9 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 		if en <= st {
 			pos++
 			continue
+		}
+		if cp.start_line && st != 0 {
+			break
 		}
 		mut color_st := st
 		mut color_en := en

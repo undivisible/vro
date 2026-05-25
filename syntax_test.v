@@ -140,6 +140,32 @@ rules:
 	assert out.contains('\x1b[0m')
 }
 
+fn test_markdown_inline_code_does_not_carry_across_bullet_text() {
+	src := os.read_file('syntax/markdown.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	line := '- `right <path>` / `left <path>` / `top <path>` / `bottom <path>` opens a file in a split'
+	owners, groups, carry := hl_fill_owners(mut syn, line, []bool{})
+	assert !carry.any(it)
+	inline := '`right <path>`'
+	code_at := line.index(inline) or { panic('missing inline code') }
+	for i in code_at .. code_at + inline.len {
+		assert groups[i] == 'special'
+	}
+	sep := ' / '
+	sep_at := line.index_after(sep, code_at + inline.len) or { panic('missing separator') }
+	for i in sep_at .. sep_at + sep.len {
+		assert groups[i] != 'special'
+		assert groups[i] != 'preproc'
+		assert groups[i] != 'statement'
+	}
+	plain := ' opens a file in a split'
+	at := line.index(plain) or { panic('missing plain text') }
+	for i in at .. line.len {
+		assert i < owners.len
+		assert groups[i] != 'special'
+	}
+}
+
 fn test_dynamic_syntax_dir_loads_unknown_extension() {
 	old := os.getenv('VRO_SYNTAX_DIR')
 	dir := os.join_path(os.temp_dir(), 'vro-dynamic-syntax-test')

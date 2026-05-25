@@ -4,8 +4,10 @@ detect:
     filename: "\\.(livemd|md|mkd|mkdn|markdown)$"
 
 rules:
+    - special: "`[^`]*`"
+
     # Tables (Github extension)
-    - type: ".*[ :]\\|[ :].*"
+    - type: "^\\s*\\|.*\\|\\s*$"
 
       # quotes
     - statement:  "^>.*"
@@ -29,7 +31,10 @@ rules:
     - identifier:   "^[[:space:]]*[\\*+-] |^[[:space:]]*[0-9]+\\. "
 
       # misc
-    - preproc:   "(\\(([CcRr]|[Tt][Mm])\\)|\\.{3}|(^|[[:space:]])\\-\\-($|[[:space:]]))"
+    - preproc:   "\\([CcRr]\\)"
+    - preproc:   "\\([Tt][Mm]\\)"
+    - preproc:   "\\.{3}"
+    - preproc:   "(^|[[:space:]])\\-\\-($|[[:space:]])"
 
       # links
     - constant: "\\[[^]]+\\]"
@@ -42,8 +47,3 @@ rules:
     - underlined: "https?://[^ )>]+"
 
     - special: "^```$"
-
-    - special:
-        start: "`"
-        end: "`"
-        rules: []
