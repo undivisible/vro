@@ -1020,7 +1020,7 @@ fn editor_scroll(mut e EditorConfig) {
 	}
 }
 
-fn editor_selection_rx_bounds_for_row(e EditorConfig, filerow int) (int, int, bool) {
+fn editor_sel_rx_bounds(e EditorConfig, filerow int) (int, int, bool) {
 	start, end, ok := editor_selection_bounds(e)
 	if !ok || filerow < start.cy || filerow > end.cy || filerow >= e.rows.len {
 		return 0, 0, false
@@ -1040,7 +1040,7 @@ fn editor_selection_rx_bounds_for_row(e EditorConfig, filerow int) (int, int, bo
 	return editor_row_cx_to_rx(row, start_cx), editor_row_cx_to_rx(row, end_cx), true
 }
 
-fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render string, filerow int, start int, len int, selected bool) {
+fn draw_slice(mut e EditorConfig, mut ab strings.Builder, render string, filerow int, start int, len int, selected bool) {
 	if len <= 0 {
 		return
 	}
@@ -1059,8 +1059,9 @@ fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render s
 			e.rows[filerow].hl_groups = groups
 			e.rows[filerow].hl_cached = true
 		}
-		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups,
-			render, start, len, mut ab)
+		owners := e.rows[filerow].hl_owners
+		groups := e.rows[filerow].hl_groups
+		hl_draw_line_slice_cached(owners, groups, render, start, len, mut ab)
 	} else {
 		ab.write_string(render[start..start + len])
 	}
@@ -1085,22 +1086,22 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
-					filerow)
+				sel_start, sel_end, has_selection := editor_sel_rx_bounds(e, filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
-						len, false)
+					coloff := e.coloff
+					draw_slice(mut e, mut ab, render, filerow, coloff, len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
 					left_end := if sel_start > visible_start { sel_start } else { visible_start }
 					right_start := if sel_end < visible_end { sel_end } else { visible_end }
-					editor_append_line_slice(mut e, mut ab, render, filerow, visible_start,
-						left_end - visible_start, false)
-					editor_append_line_slice(mut e, mut ab, render, filerow, left_end,
-						right_start - left_end, true)
-					editor_append_line_slice(mut e, mut ab, render, filerow, right_start,
-						visible_end - right_start, false)
+					left_len := left_end - visible_start
+					mid_len := right_start - left_end
+					right_len := visible_end - right_start
+					fr := filerow
+					draw_slice(mut e, mut ab, render, fr, visible_start, left_len, false)
+					draw_slice(mut e, mut ab, render, fr, left_end, mid_len, true)
+					draw_slice(mut e, mut ab, render, fr, right_start, right_len, false)
 				}
 			}
 		}
@@ -1287,22 +1288,22 @@ fn editor_draw_at(mut e EditorConfig, mut ab strings.Builder, rect PaneRect) Scr
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
-					filerow)
+				sel_start, sel_end, has_selection := editor_sel_rx_bounds(e, filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
-						len, false)
+					coloff := e.coloff
+					draw_slice(mut e, mut ab, render, filerow, coloff, len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
 					left_end := if sel_start > visible_start { sel_start } else { visible_start }
 					right_start := if sel_end < visible_end { sel_end } else { visible_end }
-					editor_append_line_slice(mut e, mut ab, render, filerow, visible_start,
-						left_end - visible_start, false)
-					editor_append_line_slice(mut e, mut ab, render, filerow, left_end,
-						right_start - left_end, true)
-					editor_append_line_slice(mut e, mut ab, render, filerow, right_start,
-						visible_end - right_start, false)
+					left_len := left_end - visible_start
+					mid_len := right_start - left_end
+					right_len := visible_end - right_start
+					fr := filerow
+					draw_slice(mut e, mut ab, render, fr, visible_start, left_len, false)
+					draw_slice(mut e, mut ab, render, fr, left_end, mid_len, true)
+					draw_slice(mut e, mut ab, render, fr, right_start, right_len, false)
 				}
 				used += len
 			}
@@ -1622,7 +1623,8 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 	match cmd {
 		'q', 'quit', 'exit', 'x' {
 			if e.dirty > 0 {
-				editor_set_status_message(mut e, 'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
+				msg := 'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.'
+				editor_set_status_message(mut e, msg)
 				return true
 			}
 			print('\x1b[2J')
@@ -1711,16 +1713,19 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e, 'open/o right/left/top/bottom buffer/b bnext/bprev close git refresh write/save find goto/g syntax quit')
+			msg := 'open/o right/left/top/bottom buffer/b bnext/bprev close git refresh write/save find goto/g syntax quit'
+			editor_set_status_message(mut e, msg)
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				msg := 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.'
+				editor_set_status_message(mut e, msg)
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				msg := 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}'
+				editor_set_status_message(mut e, msg)
 			}
 		}
 		else {
@@ -2359,7 +2364,8 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		msg := 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)'
+		editor_set_status_message(mut e, msg)
 		return true
 	}
 	return false
@@ -2779,6 +2785,7 @@ fn app_run_command(mut app VroApp, input string) bool {
 		}
 		else {}
 	}
+
 	idx := app_active_buffer_index(app)
 	return editor_run_command(mut app.buffers[idx], input)
 }
@@ -3006,22 +3013,25 @@ fn app_prepare_mouse_editor(mut app VroApp, pane int, rect PaneRect) int {
 fn app_mouse_down(mut app VroApp, row int, col int, extend bool) {
 	target := app_local_mouse(app, row, col)
 	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
-	editor_begin_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
-		extend)
+	local_row := target.local_row
+	local_col := target.local_col
+	editor_begin_mouse_selection(mut app.buffers[idx], local_row, local_col, extend)
 }
 
 fn app_mouse_drag(mut app VroApp, row int, col int) {
 	target := app_local_mouse(app, row, col)
 	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
-	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
-		false)
+	local_row := target.local_row
+	local_col := target.local_col
+	editor_drag_mouse_selection(mut app.buffers[idx], local_row, local_col, false)
 }
 
 fn app_mouse_up(mut app VroApp, row int, col int) {
 	target := app_local_mouse(app, row, col)
 	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
-	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
-		false)
+	local_row := target.local_row
+	local_col := target.local_col
+	editor_drag_mouse_selection(mut app.buffers[idx], local_row, local_col, false)
 	editor_end_mouse_selection(mut app.buffers[idx])
 }
 
