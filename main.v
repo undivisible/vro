@@ -7,7 +7,7 @@ import strings
 import time
 import clipboard
 
-const vro_version = '1.0.5'
+const vro_version = '1.0.6'
 
 const tab_stop = 4
 const quit_times = 3
