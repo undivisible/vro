@@ -225,6 +225,25 @@ fn is_syntax_word_boundary(line string, pos int) bool {
 	return left != right
 }
 
+fn syntax_word_core_bounds(line string, start int, end int) (int, int, bool) {
+	mut first := -1
+	mut last := -1
+	mut i := start
+	for i < end && i < line.len {
+		if is_syntax_word_byte(line[i]) {
+			if first < 0 {
+				first = i
+			}
+			last = i + 1
+		}
+		i++
+	}
+	if first < 0 || last < first {
+		return start, end, false
+	}
+	return first, last, true
+}
+
 fn compile_maybe_re(pat string) ?regex.RE {
 	p2 := pat.replace('\\b', '')
 	p3 := patch_v_regex(p2)
@@ -609,12 +628,19 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 			pos++
 			continue
 		}
-		if cp.word_boundary && (!is_syntax_word_boundary(line, st)
-			|| !is_syntax_word_boundary(line, en)) {
-			pos = en
-			continue
+		mut color_st := st
+		mut color_en := en
+		if cp.word_boundary {
+			word_st, word_en, has_word := syntax_word_core_bounds(line, st, en)
+			if !has_word || !is_syntax_word_boundary(line, word_st)
+				|| !is_syntax_word_boundary(line, word_en) {
+				pos = en
+				continue
+			}
+			color_st = word_st
+			color_en = word_en
 		}
-		for k := st; k < en && k < line.len; k++ {
+		for k := color_st; k < color_en && k < line.len; k++ {
 			if owners[k] == -1 {
 				owners[k] = ri
 				groups[k] = cp.group

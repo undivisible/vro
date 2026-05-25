@@ -182,11 +182,23 @@ fn syntax_group_at(mut syn CompiledSyntax, line string, needle string) string {
 	return ''
 }
 
+fn syntax_group_at_offset(mut syn CompiledSyntax, line string, needle string, offset int) string {
+	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
+	at := line.index(needle) or { panic('missing needle ${needle}') }
+	idx := at + offset
+	if idx < 0 || idx >= owners.len || owners[idx] == -1 {
+		return ''
+	}
+	return groups[idx]
+}
+
 fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	src := os.read_file('syntax/v.yaml')!
 	mut syn := compile_syntax_from_yaml(src)!
 	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", 'vro_version') == ''
 	assert syntax_group_at(mut syn, 'const key_arrow_left = 1000', 'key_arrow_left') == ''
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key') == 'identifier.function'
+	assert syntax_group_at_offset(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key(', 'ctrl_key'.len) == 'symbol.brackets'
 	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
 	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
 	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'

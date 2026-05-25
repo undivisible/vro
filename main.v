@@ -3357,6 +3357,7 @@ fn print_vro_help() {
 	println('  -version, --version   Print version and exit')
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
+	println('Ctrl-C/Ctrl-X/Ctrl-V use vro internal clipboard. Ctrl-Z/Ctrl-Y undo and redo.')
 	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; double-click selects word; triple-click selects sentence.')
 	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Delete deletes next word; Ctrl-W/Option-Delete deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
