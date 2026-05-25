@@ -41,10 +41,10 @@ fn syntax_runtime_dirs() []string {
 			}
 		}
 	}
-	dirs << syntax_user_dir()
 	dirs << os.join_path(os.getwd(), 'syntax')
-	dirs << syntax_data_home_dir()
 	dirs << syntax_executable_dirs()
+	dirs << syntax_data_home_dir()
+	dirs << syntax_user_dir()
 	dirs << '/opt/homebrew/share/vro/syntax'
 	dirs << '/usr/local/share/vro/syntax'
 	dirs << '/usr/share/vro/syntax'
@@ -255,7 +255,7 @@ fn compile_maybe_re(pat string) ?regex.RE {
 	return re
 }
 
-fn split_top_level_alternation(pat string) []string {
+fn find_first_regex_group(pat string) (int, int, bool) {
 	mut open := -1
 	mut close := -1
 	mut depth := 0
@@ -298,16 +298,17 @@ fn split_top_level_alternation(pat string) []string {
 		}
 	}
 	if open < 0 || close <= open {
-		return [pat]
+		return 0, 0, false
 	}
-	prefix := pat[..open]
-	suffix := pat[close + 1..]
-	inner := pat[open + 1..close]
+	return open, close, true
+}
+
+fn split_alternation_parts(inner string) []string {
 	mut parts := []string{}
 	mut start := 0
-	depth = 0
-	in_class = false
-	escaped = false
+	mut depth := 0
+	mut in_class := false
+	mut escaped := false
 	for i, ch in inner {
 		if escaped {
 			escaped = false
@@ -344,13 +345,32 @@ fn split_top_level_alternation(pat string) []string {
 			else {}
 		}
 	}
-	if parts.len == 0 {
+	parts << inner[start..]
+	return parts
+}
+
+fn expand_regex_groups(pat string) []string {
+	open, close, ok := find_first_regex_group(pat)
+	if !ok {
 		return [pat]
 	}
-	parts << inner[start..]
+	prefix := pat[..open]
+	mut suffix := pat[close + 1..]
+	inner := pat[open + 1..close]
+	mut parts := split_alternation_parts(inner)
+	mut include_empty := false
+	if suffix.len > 0 && suffix[0] == `?` {
+		suffix = suffix[1..]
+		include_empty = true
+	}
+	if include_empty {
+		parts << ''
+	}
 	mut out := []string{}
 	for part in parts {
-		out << prefix + part + suffix
+		for expanded in expand_regex_groups(prefix + part + suffix) {
+			out << expanded
+		}
 	}
 	return out
 }
@@ -361,7 +381,7 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 	for r in rules {
 		match r.kind {
 			.pat {
-				for part in split_top_level_alternation(r.pat) {
+				for part in expand_regex_groups(r.pat) {
 					re := compile_one_re(part) or { continue }
 					out.rules << CompiledRule{
 						kind:  .pat

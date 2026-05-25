@@ -202,6 +202,12 @@ fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	assert syntax_group_at_offset(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key(', 'ctrl_key'.len) == 'symbol.brackets'
 	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
 	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
+	assert syntax_group_at(mut syn, 'fn size() i64 {', 'i64') == 'type'
+	assert syntax_group_at(mut syn, 'fn count() int {', 'int') == 'type'
+	assert syntax_group_at(mut syn, 'fn ratio() f64 {', 'f64') == 'type'
+	assert syntax_group_at(mut syn, 'mut values := map[string]int{}', 'map') == 'type'
+	assert syntax_group_at(mut syn, 'mut total any_int = 0', 'any_int') == 'type'
+	assert syntax_group_at(mut syn, 'mut ptr uintptr', 'uintptr') == 'type'
 	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
 	assert syntax_group_at(mut syn, 'mut _ := value', '_') == ''
 	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '<') == 'symbol.operator'
@@ -257,9 +263,10 @@ fn test_editor_render_highlights_v_when_forced_color() {
 	e.screencols = 80
 	e.screenrows = 3
 	out := editor_build_screen(mut e)
+	assert syntax_group_at(mut e.hl_syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
 	assert out.contains('\x1b[34mfn\x1b[0m') || out.contains('\x1b[35mfn\x1b[0m')
 	assert out.contains('\x1b[96mctrl_key\x1b[0m')
-	assert out.contains('u8')
+	assert out.contains('\x1b[34mu8\x1b[0m')
 	assert out.contains('\x1b[36m0x1f\x1b[0m')
 }
 
