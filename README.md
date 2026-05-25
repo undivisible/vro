@@ -8,7 +8,8 @@ A small `micro`-inspired terminal text editor written in V.
 
 ## Features
 
-- Open files from argv
+- Open multiple files from argv
+- Split files into left/right/top/bottom panes
 - Insert and delete text
 - Arrow/home/end/page navigation
 - Save with `Ctrl-S`
@@ -16,12 +17,13 @@ A small `micro`-inspired terminal text editor written in V.
 - Command bar with `Ctrl-E`
 - Line numbers in the left gutter
 - Dirty-file quit protection with `Ctrl-Q`
+- Gutter mark rendering is present; live git detection is deferred
 - Micro-style **YAML** syntax highlighting (V regex engine; see `syntax/`)
 
 ## Run
 
 ```sh
-v -gc none run . [file]
+v -gc none run . [file ...]
 ```
 
 
@@ -29,7 +31,7 @@ v -gc none run . [file]
 
 ```sh
 v -gc none -prod -o vro .
-./vro [file]
+./vro [file ...]
 ```
 
 ## Test
@@ -53,7 +55,7 @@ Example: `./vro -version`
 
 ## Syntax highlighting
 
-Syntax rules load dynamically from YAML files named `<name>.yaml`, where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Lookup order is `VRO_SYNTAX_DIR`, `~/.config/vro/syntax`, local `./syntax`, installed data dirs such as `~/.local/share/vro/syntax`, then embedded V/HTML fallback rules. Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Region rules continue across newlines (e.g. `/* … */`). Patterns use V’s `regex` module (not PCRE); `\\b` is stripped on load. Disable with `NO_COLOR` or `VRO_NO_HL=1`; `VRO_FORCE_COLOR=1` overrides `NO_COLOR`. Run `:syntax` in the command bar to see which syntax file loaded.
+Syntax rules load dynamically from YAML files named `<name>.yaml`, where `<name>` follows micro bundle names (`v`, `go`, `rust`, `cpp`, …) inferred from the file extension, or the extension without the dot if unknown (e.g. `nim.yaml` for `.nim`). Lookup order is `VRO_SYNTAX_DIR`, local `./syntax`, installed syntax dirs, `~/.local/share/vro/syntax`, then `~/.config/vro/syntax`. Same schema as below. Rules are a **subset** of [micro](https://github.com/micro-editor/micro/tree/master/runtime/syntax) YAML: `filetype`, `detect.filename`, and ordered `rules` of `- group: "regex"` patterns plus simple `- group:` / `start:` / `end:` / `skip:` regions. Region rules continue across newlines (e.g. `/* … */`). Patterns use V’s `regex` module (not PCRE); `\\b` word boundaries are emulated for identifier-aware rules and color only the word core of mixed matches like `name(`. Disable with `NO_COLOR` or `VRO_NO_HL=1`; `VRO_FORCE_COLOR=1` overrides `NO_COLOR`. Run `:syntax` in the command bar to see which syntax file loaded.
 
 ## Install
 
@@ -97,6 +99,8 @@ After you publish a release tag (e.g. `v1.0.0`), refresh the tap: `./scripts/pri
 - `Ctrl-F`: search
 - `Ctrl-E`: command bar
 - `Ctrl-N`: cycle buffer word completions (longer words sharing prefix)
+- `Ctrl-C` / `Ctrl-X` / `Ctrl-V`: copy, cut, and paste with the system clipboard, falling back to vro's internal clipboard
+- `Ctrl-Z` / `Ctrl-Y`: undo and redo
 - `Tab`: indent with spaces; on `.html`/`.htm` buffers, expands a lone tag at end-of-line (emmet-lite)
 - `Backspace` / `Delete`: delete character, or delete selected text
 - `Ctrl-Delete`: delete next word
@@ -111,6 +115,11 @@ After you publish a release tag (e.g. `v1.0.0`), refresh the tap: `./scripts/pri
 Press `Ctrl-E`, then type a command:
 
 - `open <path>` or `o <path>` (`open!` / `o!` discards unsaved changes)
+- `right <path>` / `left <path>` / `top <path>` / `bottom <path>` opens a file in a split
+- `buffer <n|path>` or `b <n|path>` switches the active pane to an open buffer
+- `bnext` / `bn` and `bprev` / `bp` cycle buffers in the active pane
+- `close` closes the active split pane
+- `git refresh` reports that live git gutter refresh is disabled
 - `write` / `w` / `save` (or pass a path: `write <path>`)
 - `saveas <path>`
 - `find <text>` (or just `find` for interactive search)
@@ -118,6 +127,8 @@ Press `Ctrl-E`, then type a command:
 - `quit` / `q` / `exit` / `x` (or `quit!` / `exit!` / `x!` to discard)
 - `wq` — save and quit
 - `help`
+
+Terminal panes are not implemented yet; commands such as `top zsh` report that limitation instead of starting a shell.
 
 ## License
 

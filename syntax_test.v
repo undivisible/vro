@@ -4,8 +4,28 @@ import os
 import strings
 import term.ui as tui
 
+fn strip_ansi(s string) string {
+	mut out := strings.new_builder(s.len)
+	mut i := 0
+	for i < s.len {
+		if s[i] == 0x1b && i + 1 < s.len && s[i + 1] == `[` {
+			i += 2
+			for i < s.len && !((s[i] >= `A` && s[i] <= `Z`) || (s[i] >= `a` && s[i] <= `z`)) {
+				i++
+			}
+			if i < s.len {
+				i++
+			}
+			continue
+		}
+		out.write_u8(s[i])
+		i++
+	}
+	return out.str()
+}
+
 fn test_vro_version() {
-	assert vro_version == '1.0.5'
+	assert vro_version == '1.0.6'
 }
 
 fn test_syntax_name_for_ext() {
@@ -120,6 +140,32 @@ rules:
 	assert out.contains('\x1b[0m')
 }
 
+fn test_markdown_inline_code_does_not_carry_across_bullet_text() {
+	src := os.read_file('syntax/markdown.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	line := '- `right <path>` / `left <path>` / `top <path>` / `bottom <path>` opens a file in a split'
+	owners, groups, carry := hl_fill_owners(mut syn, line, []bool{})
+	assert !carry.any(it)
+	inline := '`right <path>`'
+	code_at := line.index(inline) or { panic('missing inline code') }
+	for i in code_at .. code_at + inline.len {
+		assert groups[i] == 'special'
+	}
+	sep := ' / '
+	sep_at := line.index_after(sep, code_at + inline.len) or { panic('missing separator') }
+	for i in sep_at .. sep_at + sep.len {
+		assert groups[i] != 'special'
+		assert groups[i] != 'preproc'
+		assert groups[i] != 'statement'
+	}
+	plain := ' opens a file in a split'
+	at := line.index(plain) or { panic('missing plain text') }
+	for i in at .. line.len {
+		assert i < owners.len
+		assert groups[i] != 'special'
+	}
+}
+
 fn test_dynamic_syntax_dir_loads_unknown_extension() {
 	old := os.getenv('VRO_SYNTAX_DIR')
 	dir := os.join_path(os.temp_dir(), 'vro-dynamic-syntax-test')
@@ -149,6 +195,105 @@ fn test_local_syntax_reports_source() {
 	}
 	mut syn := load_syntax_for_path('demo.v') or { panic('missing v syntax') }
 	assert syn.source == os.join_path(dir, 'v.yaml')
+}
+
+fn syntax_group_at(mut syn CompiledSyntax, line string, needle string) string {
+	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
+	at := line.index(needle) or { panic('missing needle ${needle}') }
+	for i in at .. at + needle.len {
+		if i < owners.len && owners[i] != -1 {
+			return groups[i]
+		}
+	}
+	return ''
+}
+
+fn syntax_group_at_offset(mut syn CompiledSyntax, line string, needle string, offset int) string {
+	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
+	at := line.index(needle) or { panic('missing needle ${needle}') }
+	idx := at + offset
+	if idx < 0 || idx >= owners.len || owners[idx] == -1 {
+		return ''
+	}
+	return groups[idx]
+}
+
+fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'fn') == 'type.keyword'
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", 'vro_version') == ''
+	assert syntax_group_at(mut syn, 'const key_arrow_left = 1000', 'key_arrow_left') == ''
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key') == 'identifier.function'
+	assert syntax_group_at_offset(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key(', 'ctrl_key'.len) == 'symbol.brackets'
+	assert syntax_group_at(mut syn, '@[inline]', 'inline') == 'symbol.attribute'
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
+	assert syntax_group_at(mut syn, 'fn size() i64 {', 'i64') == 'type'
+	assert syntax_group_at(mut syn, 'fn count() int {', 'int') == 'type'
+	assert syntax_group_at(mut syn, 'fn ratio() f64 {', 'f64') == 'type'
+	assert syntax_group_at(mut syn, 'mut values := map[string]int{}', 'map') == 'type'
+	assert syntax_group_at(mut syn, 'mut total any_int = 0', 'any_int') == 'type'
+	assert syntax_group_at(mut syn, 'mut ptr uintptr', 'uintptr') == 'type'
+	assert syntax_group_at(mut syn, 'const tab_stop = 4', '4') == 'constant.number'
+	assert syntax_group_at(mut syn, 'mut _ := value', '_') == ''
+	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '<') == 'symbol.operator'
+	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '||') == 'symbol.operator'
+}
+
+fn test_bundled_v_line_comment_region_does_not_carry() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	carry := []bool{len: syn.rules.len, init: false}
+	next := hl_carry_row(mut syn, '// comment', carry)
+	assert !next.any(it)
+	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', 'return') != 'comment'
+	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', '0x1f') == 'constant.number'
+}
+
+fn test_v_regions_override_keywords_and_numbers() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, '// SPDX-License-Identifier: MPL-2.0', 'SPDX') == 'comment'
+	assert syntax_group_at(mut syn, '// SPDX-License-Identifier: MPL-2.0', '2') == 'comment'
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", '1') == 'constant.string'
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", '.') == 'constant.string'
+}
+
+fn test_editor_render_highlights_v_when_forced_color() {
+	old_no_color := os.getenv('NO_COLOR')
+	old_force := os.getenv('VRO_FORCE_COLOR')
+	old_no_hl := os.getenv('VRO_NO_HL')
+	os.setenv('NO_COLOR', '1', true)
+	os.setenv('VRO_FORCE_COLOR', '1', true)
+	os.unsetenv('VRO_NO_HL')
+	defer {
+		if old_no_color.len > 0 {
+			os.setenv('NO_COLOR', old_no_color, true)
+		} else {
+			os.unsetenv('NO_COLOR')
+		}
+		if old_force.len > 0 {
+			os.setenv('VRO_FORCE_COLOR', old_force, true)
+		} else {
+			os.unsetenv('VRO_FORCE_COLOR')
+		}
+		if old_no_hl.len > 0 {
+			os.setenv('VRO_NO_HL', old_no_hl, true)
+		} else {
+			os.unsetenv('VRO_NO_HL')
+		}
+	}
+	mut e := editor_new()
+	e.filename = 'main.v'
+	editor_load_buffer_content(mut e, 'fn ctrl_key(c u8) int {\n\treturn int(c & 0x1f)\n}')
+	e.screencols = 80
+	e.screenrows = 3
+	out := editor_build_screen(mut e)
+	assert syntax_group_at(mut e.hl_syn, 'fn ctrl_key(c u8) int {', 'u8') == 'type'
+	assert out.contains('\x1b[34mfn\x1b[0m') || out.contains('\x1b[35mfn\x1b[0m')
+	assert out.contains('\x1b[96mctrl_key\x1b[0m')
+	assert out.contains('\x1b[34mu8\x1b[0m')
+	assert out.contains('\x1b[36m0x1f\x1b[0m')
 }
 
 fn test_ui_sanitize_display() {
@@ -343,6 +488,71 @@ fn test_ctrl_u_deletes_to_line_start() {
 	assert editor_process_key(mut e, ctrl_key(`u`), '')
 	assert e.rows[0].chars.bytestr() == 'beta'
 	assert e.cx == 0
+}
+
+fn test_ctrl_c_v_x_internal_clipboard() {
+	old := os.getenv('VRO_NO_SYSTEM_CLIPBOARD')
+	os.setenv('VRO_NO_SYSTEM_CLIPBOARD', '1', true)
+	defer {
+		if old.len > 0 {
+			os.setenv('VRO_NO_SYSTEM_CLIPBOARD', old, true)
+		} else {
+			os.unsetenv('VRO_NO_SYSTEM_CLIPBOARD')
+		}
+	}
+	mut row := Erow{
+		chars:  'alpha beta'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              5
+		quit_times_left: quit_times
+	}
+	editor_set_selection(mut e, CursorPos{
+		cy: 0
+		cx: 0
+	}, CursorPos{
+		cy: 0
+		cx: 5
+	})
+	assert editor_process_key(mut e, ctrl_key(`c`), '')
+	assert e.clipboard == 'alpha'
+	assert e.rows[0].chars.bytestr() == 'alpha beta'
+	editor_clear_selection(mut e)
+	e.cx = e.rows[0].chars.len
+	assert editor_process_key(mut e, ctrl_key(`v`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha betaalpha'
+	editor_set_selection(mut e, CursorPos{
+		cy: 0
+		cx: 6
+	}, CursorPos{
+		cy: 0
+		cx: 10
+	})
+	assert editor_process_key(mut e, ctrl_key(`x`), '')
+	assert e.clipboard == 'beta'
+	assert e.rows[0].chars.bytestr() == 'alpha alpha'
+}
+
+fn test_ctrl_z_and_ctrl_y_undo_redo_edit() {
+	mut row := Erow{
+		chars:  'alpha'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              5
+		quit_times_left: quit_times
+	}
+	assert editor_process_key(mut e, 0, '!')
+	assert e.rows[0].chars.bytestr() == 'alpha!'
+	assert editor_process_key(mut e, ctrl_key(`z`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha'
+	assert editor_process_key(mut e, ctrl_key(`y`), '')
+	assert e.rows[0].chars.bytestr() == 'alpha!'
 }
 
 fn test_mouse_click_respects_horizontal_scroll() {
@@ -670,6 +880,460 @@ fn test_dirty_open_requires_bang() {
 	assert editor_run_command(mut e, 'open! ${path2}')
 	assert e.filename == path2
 	assert editor_rows_to_string(e) == 'two'
+}
+
+fn test_app_open_args_loads_multiple_buffers() {
+	path1 := os.join_path(os.temp_dir(), 'vro-args-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-args-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1, path2])
+	assert app.buffers.len == 2
+	assert app.panes.len == 1
+	assert app.panes[0].buffer == 0
+	assert app.buffers[1].filename == path2
+}
+
+fn test_app_split_commands_open_files_in_new_panes() {
+	path1 := os.join_path(os.temp_dir(), 'vro-split-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-split-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	assert app.buffers.len == 2
+	assert app.panes.len == 2
+	assert app.active_pane == 1
+	assert app.panes[1].buffer == 1
+	assert app.panes[1].split == .right
+	assert app.buffers[1].filename == path2
+}
+
+fn test_app_buffer_switching_and_close() {
+	path1 := os.join_path(os.temp_dir(), 'vro-buffer-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-buffer-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1, path2])
+	assert app_run_command(mut app, 'buffer 2')
+	assert app.panes[0].buffer == 1
+	assert app_run_command(mut app, 'bprev')
+	assert app.panes[0].buffer == 0
+	assert app_run_command(mut app, 'bnext')
+	assert app.panes[0].buffer == 1
+	assert app_run_command(mut app, 'close')
+	assert app.panes.len == 1
+	assert app.buffers.len == 2
+}
+
+fn test_open_command_replaces_only_active_split_buffer() {
+	path1 := os.join_path(os.temp_dir(), 'vro-active-open-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-active-open-two.txt')
+	path3 := os.join_path(os.temp_dir(), 'vro-active-open-three.txt')
+	defer {
+		for path in [path1, path2, path3] {
+			if os.exists(path) {
+				os.rm(path) or {}
+			}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	os.write_file(path3, 'replacement')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	assert app_run_command(mut app, 'open ${path3}')
+	assert app.buffers[app.panes[0].buffer].filename == path3
+	assert app.buffers[app.panes[1].buffer].filename == path2
+}
+
+fn test_git_refresh_reports_on_active_pane_only() {
+	path1 := os.join_path(os.temp_dir(), 'vro-active-git-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-active-git-two.txt')
+	defer {
+		for path in [path1, path2] {
+			if os.exists(path) {
+				os.rm(path) or {}
+			}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 1
+	assert app_run_command(mut app, 'git refresh')
+	assert app.buffers[app.panes[1].buffer].statusmsg == 'Git gutter refresh is disabled'
+	assert app.buffers[app.panes[0].buffer].statusmsg != 'Git gutter refresh is disabled'
+}
+
+fn test_app_terminal_split_command_reports_unsupported() {
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, []string{})
+	assert app_run_command(mut app, 'top zsh')
+	active := app_active_editor(mut app)
+	assert active.statusmsg == 'Terminal panes are not supported yet'
+	assert app.panes.len == 1
+}
+
+fn test_parse_git_diff_marks_added_modified_and_deleted_lines() {
+	diff := 'diff --git a/a.txt b/a.txt
+@@ -1,3 +1,4 @@
+ one
+-two
++too
++three
+ four
+@@ -8,2 +9,0 @@
+-gone
+-also gone
+'
+	marks := parse_git_diff_marks(diff)
+	assert git_mark_for_line(marks, 2) == '~'
+	assert git_mark_for_line(marks, 3) == '+'
+	assert git_mark_for_line(marks, 9) == '-'
+}
+
+fn test_parse_git_diff_marks_empty_for_no_diff() {
+	assert parse_git_diff_marks('').len == 0
+	assert parse_git_diff_marks('not a diff').len == 0
+}
+
+fn test_gutter_width_matches_rendered_columns_without_git_mark() {
+	mut e := EditorConfig{
+		rows: [
+			Erow{
+				chars:  'alpha'.bytes()
+				render: 'alpha'.bytes()
+			},
+		]
+	}
+	mut ab := strings.new_builder(32)
+	editor_append_line_gutter(e, mut ab, 0)
+	assert strip_ansi(ab.str()).len == editor_line_gutter_width(e)
+}
+
+fn test_gutter_git_marks_render_as_background_cell() {
+	mut e := EditorConfig{
+		rows:      [
+			Erow{
+				chars:  'alpha'.bytes()
+				render: 'alpha'.bytes()
+			},
+		]
+		git_marks: [
+			GitGutterMark{
+				line: 1
+				mark: '+'
+			},
+		]
+	}
+	mut ab := strings.new_builder(32)
+	editor_append_line_gutter(e, mut ab, 0)
+	out := ab.str()
+	assert strip_ansi(out).len == editor_line_gutter_width(e)
+	assert !strip_ansi(out).contains('+')
+	assert out.contains('\x1b[42m \x1b[0m')
+}
+
+fn test_split_cursor_matches_first_text_column_after_gutter() {
+	mut row := Erow{
+		chars:  'alpha'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:       [row]
+		screenrows: 4
+		screencols: 20
+	}
+	mut ab := strings.new_builder(128)
+	cursor := editor_draw_at(mut e, mut ab, PaneRect{
+		row:    1
+		col:    1
+		width:  20
+		height: 5
+	})
+	assert cursor.col == 1 + editor_line_gutter_width(e)
+	assert strip_ansi(ab.str()).contains('1  alpha')
+}
+
+fn test_split_screen_renders_multiple_filenames() {
+	path1 := os.join_path(os.temp_dir(), 'vro-render-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-render-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'bottom ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains(path1)
+	assert out.contains(path2)
+}
+
+fn test_split_screen_fits_tui_buffer() {
+	path1 := os.join_path(os.temp_dir(), 'vro-buffer-frame-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-buffer-frame-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	mut left := ''
+	mut right := ''
+	for i in 0 .. 80 {
+		left += 'left line ${i} with enough text to fill a typical pane width\n'
+		right += 'right line ${i} with enough text to fill a typical pane width\n'
+	}
+	os.write_file(path1, left)!
+	os.write_file(path2, right)!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 160
+	app.screenrows = 48
+	assert app_run_command(mut app, 'right ${path2}')
+	out := app_build_screen(mut app)
+	assert out.len < tui_buffer_size
+	assert out.len > 4096
+}
+
+fn test_right_split_renders_second_pane_on_same_row() {
+	path1 := os.join_path(os.temp_dir(), 'vro-right-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-right-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left-side')!
+	os.write_file(path2, 'right-side')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains('\x1b[1;1H')
+	assert out.contains('\x1b[1;41H')
+	assert out.contains('left-side')
+	assert out.contains('right-side')
+}
+
+fn test_bottom_split_renders_second_pane_lower() {
+	path1 := os.join_path(os.temp_dir(), 'vro-bottom-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-bottom-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'top-side')!
+	os.write_file(path2, 'bottom-side')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'bottom ${path2}')
+	out := app_build_screen(mut app)
+	assert out.contains('\x1b[1;1H')
+	assert out.contains('\x1b[7;1H')
+	assert out.contains('top-side')
+	assert out.contains('bottom-side')
+}
+
+fn test_split_command_escape_cancels_command_mode() {
+	path1 := os.join_path(os.temp_dir(), 'vro-escape-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-escape-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'one')!
+	os.write_file(path2, 'two')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	assert app_run_command(mut app, 'right ${path2}')
+	assert app_process_key(mut app, ctrl_key(`e`), '')
+	assert app_active_editor(mut app).command_mode
+	assert app_process_local_termui_bytes(mut app, '\x1b')
+	active := app_active_editor(mut app)
+	assert !active.command_mode
+	assert !active.rows.any(it.chars.bytestr().contains('^['))
+}
+
+fn test_mouse_scroll_moves_view_without_clicking_first() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	for _ in 0 .. 4 {
+		editor_scroll_mouse(mut e, .down)
+		editor_scroll(mut e)
+	}
+	assert e.rowoff == 4
+	assert e.cy == 0
+}
+
+fn test_mouse_scroll_does_not_pin_cursor_to_top() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:            rows
+		screenrows:      5
+		screencols:      40
+		quit_times_left: quit_times
+	}
+	for _ in 0 .. 4 {
+		editor_scroll_mouse(mut e, .down)
+	}
+	assert e.rowoff == 4
+	assert e.cy == 0
+}
+
+fn test_editor_hides_cursor_when_caret_scrolled_offscreen() {
+	mut rows := []Erow{}
+	for i in 0 .. 20 {
+		mut row := Erow{
+			chars:  'line${i}'.bytes()
+			render: []u8{}
+		}
+		editor_update_row(mut row)
+		rows << row
+	}
+	mut e := EditorConfig{
+		rows:          rows
+		screenrows:    5
+		screencols:    40
+		rowoff:        4
+		cy:            0
+		follow_cursor: false
+	}
+	out := editor_build_screen(mut e)
+	assert !out.contains('\x1b[?25h')
+}
+
+fn test_mouse_click_in_right_split_focuses_second_editor() {
+	path1 := os.join_path(os.temp_dir(), 'vro-focus-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-focus-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left')!
+	os.write_file(path2, 'right')!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	app_mouse_down(mut app, 1, 45, false)
+	assert app.active_pane == 1
+	assert app_active_editor(mut app).filename == path2
+}
+
+fn test_mouse_scroll_over_right_split_scrolls_second_editor() {
+	path1 := os.join_path(os.temp_dir(), 'vro-scroll-one.txt')
+	path2 := os.join_path(os.temp_dir(), 'vro-scroll-two.txt')
+	defer {
+		if os.exists(path1) {
+			os.rm(path1) or {}
+		}
+		if os.exists(path2) {
+			os.rm(path2) or {}
+		}
+	}
+	os.write_file(path1, 'left')!
+	mut content := ''
+	for i in 0 .. 20 {
+		content += 'right${i}\n'
+	}
+	os.write_file(path2, content)!
+	mut app := vro_app_new()
+	vro_app_open_args(mut app, [path1])
+	app.screencols = 80
+	app.screenrows = 12
+	assert app_run_command(mut app, 'right ${path2}')
+	app.active_pane = 0
+	app_mouse_scroll(mut app, 1, 45, .down)
+	assert app.active_pane == 1
+	assert app.buffers[1].rowoff == 1
+	assert app.buffers[0].rowoff == 0
 }
 
 fn test_tui_key_to_editor_key_ctrl_letters() {

@@ -5,11 +5,13 @@ import os
 import term.ui as tui
 import strings
 import time
+import clipboard
 
-const vro_version = '1.0.5'
+const vro_version = '1.0.6'
 
 const tab_stop = 4
 const quit_times = 3
+const tui_buffer_size = 262144
 
 const key_arrow_left = 1000
 const key_arrow_right = 1001
@@ -87,33 +89,78 @@ mut:
 	cx int
 }
 
+enum EditorPaneSplit {
+	root
+	left
+	right
+	top
+	bottom
+}
+
+struct EditorPane {
+mut:
+	buffer int
+	split  EditorPaneSplit
+}
+
+struct GitGutterMark {
+mut:
+	line int
+	mark string
+}
+
+struct PaneRect {
+mut:
+	row    int
+	col    int
+	width  int
+	height int
+}
+
+struct ScreenCursor {
+mut:
+	row     int
+	col     int
+	visible bool = true
+}
+
+struct MouseTarget {
+mut:
+	pane      int
+	local_row int
+	local_col int
+	rect      PaneRect
+}
+
 struct EditorConfig {
 mut:
-	cx             int
-	cy             int
-	rx             int
-	rowoff         int
-	coloff         int
-	screenrows     int
-	screencols     int
-	rows           []Erow
-	dirty          int
-	filename       string
-	trailing_nl    bool
-	statusmsg      string
-	statusmsg_time i64
-	command_mode   bool
-	command_buffer string
-	prompt_kind    EditorPromptKind
-	prompt_prefix  string
-	prompt_text    string
-	prompt_cx      int
-	find_saved_cx  int
-	find_saved_cy  int
-	find_saved_col int
-	find_saved_row int
-	find_last      int = -1
-	find_direction int = 1
+	cx                    int
+	cy                    int
+	rx                    int
+	rowoff                int
+	coloff                int
+	screenrows            int
+	screencols            int
+	rows                  []Erow
+	dirty                 int
+	filename              string
+	trailing_nl           bool
+	statusmsg             string
+	statusmsg_time        i64
+	command_mode          bool
+	command_buffer        string
+	prompt_kind           EditorPromptKind
+	prompt_prefix         string
+	prompt_text           string
+	prompt_cx             int
+	submitted_command     string
+	has_submitted_command bool
+	find_saved_cx         int
+	find_saved_cy         int
+	find_saved_col        int
+	find_saved_row        int
+	find_last             int = -1
+	find_direction        int = 1
 	// Byte offset in command_buffer where the caret sits (prompt + cmd text); command_mode only.
 	cmd_caret_bytes int
 	// Sanitized command/status text trimmed by this many bytes so metadata fits on the right.
@@ -149,6 +196,21 @@ mut:
 	last_click_pos    CursorPos
 	last_click_ms     i64
 	click_count       int
+	git_marks         []GitGutterMark
+	clipboard         string
+	undo_stack        []EditorSnapshot
+	redo_stack        []EditorSnapshot
+	follow_cursor     bool = true
+}
+
+struct EditorSnapshot {
+	text        string
+	trailing_nl bool
+	cx          int
+	cy          int
+	rowoff      int
+	coloff      int
+	dirty       int
 }
 
 fn editor_row_cx_to_rx(row Erow, cx int) int {
@@ -347,6 +409,55 @@ fn editor_set_cursor(mut e EditorConfig, pos CursorPos) {
 	p := editor_clamp_pos(e, pos)
 	e.cy = p.cy
 	e.cx = p.cx
+	e.follow_cursor = true
+}
+
+fn editor_snapshot(e EditorConfig) EditorSnapshot {
+	return EditorSnapshot{
+		text:        editor_rows_to_string(e)
+		trailing_nl: e.trailing_nl
+		cx:          e.cx
+		cy:          e.cy
+		rowoff:      e.rowoff
+		coloff:      e.coloff
+		dirty:       e.dirty
+	}
+}
+
+fn editor_restore_snapshot(mut e EditorConfig, snap EditorSnapshot) {
+	editor_load_buffer_content(mut e, snap.text)
+	e.trailing_nl = snap.trailing_nl
+	e.cx = snap.cx
+	e.cy = snap.cy
+	e.rowoff = snap.rowoff
+	e.coloff = snap.coloff
+	e.dirty = snap.dirty
+	e.follow_cursor = true
+	editor_clear_selection(mut e)
+}
+
+fn editor_undo(mut e EditorConfig) {
+	if e.undo_stack.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to undo')
+		return
+	}
+	current := editor_snapshot(e)
+	snap := e.undo_stack[e.undo_stack.len - 1]
+	e.undo_stack.delete(e.undo_stack.len - 1)
+	e.redo_stack << current
+	editor_restore_snapshot(mut e, snap)
+}
+
+fn editor_redo(mut e EditorConfig) {
+	if e.redo_stack.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to redo')
+		return
+	}
+	current := editor_snapshot(e)
+	snap := e.redo_stack[e.redo_stack.len - 1]
+	e.redo_stack.delete(e.redo_stack.len - 1)
+	e.undo_stack << current
+	editor_restore_snapshot(mut e, snap)
 }
 
 fn editor_update_selection_cursor(mut e EditorConfig) {
@@ -403,6 +514,74 @@ fn editor_delete_selection(mut e EditorConfig) bool {
 	e.dirty++
 	e.words_dirty = true
 	editor_hl_carry_invalidate(mut e)
+	return true
+}
+
+fn editor_selection_text(e EditorConfig) string {
+	start, end, ok := editor_selection_bounds(e)
+	if !ok {
+		if e.cy < e.rows.len {
+			return e.rows[e.cy].chars.bytestr()
+		}
+		return ''
+	}
+	mut out := strings.new_builder(64)
+	for row_idx in start.cy .. end.cy + 1 {
+		if row_idx >= e.rows.len {
+			break
+		}
+		row := e.rows[row_idx].chars.bytestr()
+		mut left := 0
+		mut right := row.len
+		if row_idx == start.cy {
+			left = start.cx
+		}
+		if row_idx == end.cy {
+			right = end.cx
+		}
+		if right < left {
+			right = left
+		}
+		out.write_string(row[left..right])
+		if row_idx != end.cy {
+			out.write_u8(`\n`)
+		}
+	}
+	return out.str()
+}
+
+fn editor_copy_selection(mut e EditorConfig) bool {
+	text := editor_selection_text(e)
+	if text.len == 0 {
+		editor_set_status_message(mut e, 'Nothing to copy')
+		return false
+	}
+	e.clipboard = text
+	if editor_write_system_clipboard(text) {
+		editor_set_status_message(mut e, 'Copied')
+	} else {
+		editor_set_status_message(mut e, 'Copied to internal clipboard')
+	}
+	return true
+}
+
+fn editor_cut_selection(mut e EditorConfig) bool {
+	if !editor_copy_selection(mut e) {
+		return false
+	}
+	if e.selection_active {
+		ok := editor_delete_selection(mut e)
+		editor_clear_selection(mut e)
+		return ok
+	}
+	if e.cy >= e.rows.len {
+		return false
+	}
+	editor_del_row(mut e, e.cy)
+	if e.cy >= e.rows.len && e.cy > 0 {
+		e.cy--
+	}
+	e.cx = 0
 	return true
 }
 
@@ -517,6 +696,7 @@ fn editor_open(mut e EditorConfig, filename string) ! {
 	e.rowoff = 0
 	e.coloff = 0
 	e.dirty = 0
+	editor_refresh_git_marks(mut e)
 }
 
 fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
@@ -530,6 +710,7 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 	e.rowoff = 0
 	e.coloff = 0
 	e.dirty = 0
+	editor_refresh_git_marks(mut e)
 }
 
 fn editor_save_to_path(mut e EditorConfig, filename string) bool {
@@ -541,6 +722,7 @@ fn editor_save_to_path(mut e EditorConfig, filename string) bool {
 	e.filename = filename
 	e.dirty = 0
 	e.quit_times_left = quit_times
+	editor_refresh_git_marks(mut e)
 	editor_set_status_message(mut e, '${data.len} bytes written to disk')
 	return true
 }
@@ -553,6 +735,103 @@ fn editor_save(mut e EditorConfig) bool {
 	}
 
 	return editor_save_to_path(mut e, filename)
+}
+
+fn parse_git_hunk_start(line string) int {
+	plus := line.index('+') or { return 0 }
+	mut end := plus + 1
+	for end < line.len && line[end] >= `0` && line[end] <= `9` {
+		end++
+	}
+	if end == plus + 1 {
+		return 0
+	}
+	start := line[plus + 1..end].int()
+	if start < 1 {
+		return 1
+	}
+	return start
+}
+
+fn parse_git_diff_marks(diff string) []GitGutterMark {
+	mut marks := []GitGutterMark{}
+	mut new_line := 0
+	mut pending_delete := 0
+	for line in diff.split_into_lines() {
+		if line.starts_with('@@ ') {
+			if pending_delete > 0 {
+				marks << GitGutterMark{
+					line: pending_delete
+					mark: '-'
+				}
+			}
+			pending_delete = 0
+			new_line = parse_git_hunk_start(line)
+			continue
+		}
+		if new_line <= 0 {
+			continue
+		}
+		if line.starts_with('+') && !line.starts_with('+++') {
+			if pending_delete == new_line {
+				marks << GitGutterMark{
+					line: new_line
+					mark: '~'
+				}
+				pending_delete = 0
+			} else {
+				if pending_delete > 0 {
+					marks << GitGutterMark{
+						line: pending_delete
+						mark: '-'
+					}
+					pending_delete = 0
+				}
+				marks << GitGutterMark{
+					line: new_line
+					mark: '+'
+				}
+			}
+			new_line++
+		} else if line.starts_with('-') && !line.starts_with('---') {
+			if pending_delete > 0 {
+				marks << GitGutterMark{
+					line: pending_delete
+					mark: '-'
+				}
+			}
+			pending_delete = new_line
+		} else {
+			if pending_delete > 0 {
+				marks << GitGutterMark{
+					line: pending_delete
+					mark: '-'
+				}
+				pending_delete = 0
+			}
+			new_line++
+		}
+	}
+	if pending_delete > 0 {
+		marks << GitGutterMark{
+			line: pending_delete
+			mark: '-'
+		}
+	}
+	return marks
+}
+
+fn git_mark_for_line(marks []GitGutterMark, line int) string {
+	for mark in marks {
+		if mark.line == line {
+			return mark.mark
+		}
+	}
+	return ''
+}
+
+fn editor_refresh_git_marks(mut e EditorConfig) {
+	e.git_marks = []GitGutterMark{}
 }
 
 @[inline]
@@ -571,7 +850,7 @@ fn digit_count(n int) int {
 
 fn editor_line_gutter_width(e EditorConfig) int {
 	total_lines := if e.rows.len == 0 { 1 } else { e.rows.len }
-	return digit_count(total_lines) + 1
+	return digit_count(total_lines) + 2
 }
 
 @[inline]
@@ -584,7 +863,7 @@ fn editor_text_screencols(e EditorConfig) int {
 }
 
 fn editor_append_line_gutter(e EditorConfig, mut ab strings.Builder, filerow int) {
-	width := editor_line_gutter_width(e) - 1
+	width := editor_line_gutter_width(e) - 2
 	mut label := ''
 	if filerow < e.rows.len {
 		label = (filerow + 1).str()
@@ -594,8 +873,27 @@ fn editor_append_line_gutter(e EditorConfig, mut ab strings.Builder, filerow int
 	}
 	ab.write_string('\x1b[90m')
 	ab.write_string(label)
-	ab.write_u8(` `)
 	ab.write_string('\x1b[0m')
+	mark := git_mark_for_line(e.git_marks, filerow + 1)
+	if mark.len > 0 {
+		match mark {
+			'+' {
+				ab.write_string('\x1b[42m \x1b[0m')
+			}
+			'~' {
+				ab.write_string('\x1b[43m \x1b[0m')
+			}
+			'-' {
+				ab.write_string('\x1b[41m \x1b[0m')
+			}
+			else {
+				ab.write_u8(` `)
+			}
+		}
+	} else {
+		ab.write_u8(` `)
+	}
+	ab.write_u8(` `)
 }
 
 fn editor_find_literal(mut e EditorConfig, query string) bool {
@@ -705,18 +1003,20 @@ fn editor_scroll(mut e EditorConfig) {
 	if e.cy < e.rows.len {
 		e.rx = editor_row_cx_to_rx(e.rows[e.cy], e.cx)
 	}
-	if e.cy < e.rowoff {
-		e.rowoff = e.cy
-	}
-	if e.cy >= e.rowoff + e.screenrows {
-		e.rowoff = e.cy - e.screenrows + 1
-	}
-	if e.rx < e.coloff {
-		e.coloff = e.rx
-	}
-	text_cols := editor_text_screencols(e)
-	if e.rx >= e.coloff + text_cols {
-		e.coloff = e.rx - text_cols + 1
+	if e.follow_cursor {
+		if e.cy < e.rowoff {
+			e.rowoff = e.cy
+		}
+		if e.cy >= e.rowoff + e.screenrows {
+			e.rowoff = e.cy - e.screenrows + 1
+		}
+		if e.rx < e.coloff {
+			e.coloff = e.rx
+		}
+		text_cols := editor_text_screencols(e)
+		if e.rx >= e.coloff + text_cols {
+			e.coloff = e.rx - text_cols + 1
+		}
 	}
 }
 
@@ -759,8 +1059,8 @@ fn editor_append_line_slice(mut e EditorConfig, mut ab strings.Builder, render s
 			e.rows[filerow].hl_groups = groups
 			e.rows[filerow].hl_cached = true
 		}
-		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups, render,
-			start, len, mut ab)
+		hl_draw_line_slice_cached(e.rows[filerow].hl_owners, e.rows[filerow].hl_groups,
+			render, start, len, mut ab)
 	} else {
 		ab.write_string(render[start..start + len])
 	}
@@ -785,9 +1085,11 @@ fn editor_draw_rows(mut e EditorConfig, mut ab strings.Builder) {
 				len = text_cols
 			}
 			if len > 0 {
-				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e, filerow)
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
 				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
-					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff, len, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
 				} else {
 					visible_start := e.coloff
 					visible_end := e.coloff + len
@@ -930,9 +1232,12 @@ fn editor_build_screen(mut e EditorConfig) string {
 	editor_draw_status_bar(mut e, mut ab)
 	mut cursor_y := (e.cy - e.rowoff) + 1
 	mut cursor_x := editor_line_gutter_width(e) + (e.rx - e.coloff) + 1
+	mut cursor_visible := cursor_y >= 1 && cursor_y <= e.screenrows && cursor_x >= 1
+		&& cursor_x <= e.screencols
 	if e.command_mode {
 		cursor_y = e.screenrows + 1
 		cursor_x = editor_footer_caret_column(mut e)
+		cursor_visible = true
 	}
 	if cursor_y < 1 {
 		cursor_y = 1
@@ -940,9 +1245,100 @@ fn editor_build_screen(mut e EditorConfig) string {
 	if cursor_x < 1 {
 		cursor_x = 1
 	}
-	ab.write_string('\x1b[${cursor_y};${cursor_x}H')
-	ab.write_string('\x1b[?25h')
+	if cursor_visible {
+		ab.write_string('\x1b[${cursor_y};${cursor_x}H')
+		ab.write_string('\x1b[?25h')
+	}
 	return ab.str()
+}
+
+fn term_move(row int, col int) string {
+	return '\x1b[${row};${col}H'
+}
+
+fn editor_draw_at(mut e EditorConfig, mut ab strings.Builder, rect PaneRect) ScreenCursor {
+	if rect.width < 1 || rect.height < 1 {
+		return ScreenCursor{
+			row: rect.row
+			col: rect.col
+		}
+	}
+	e.screencols = rect.width
+	e.screenrows = rect.height - 1
+	if e.screenrows < 1 {
+		e.screenrows = 1
+	}
+	editor_scroll(mut e)
+	editor_ensure_syntax(mut e)
+	editor_ensure_hl_carry(mut e)
+	for y in 0 .. e.screenrows {
+		ab.write_string(term_move(rect.row + y, rect.col))
+		filerow := y + e.rowoff
+		editor_append_line_gutter(e, mut ab, filerow)
+		mut used := editor_line_gutter_width(e)
+		if filerow < e.rows.len {
+			render := e.rows[filerow].render.bytestr()
+			mut len := render.len - e.coloff
+			if len < 0 {
+				len = 0
+			}
+			text_cols := editor_text_screencols(e)
+			if len > text_cols {
+				len = text_cols
+			}
+			if len > 0 {
+				sel_start, sel_end, has_selection := editor_selection_rx_bounds_for_row(e,
+					filerow)
+				if !has_selection || sel_end <= e.coloff || sel_start >= e.coloff + len {
+					editor_append_line_slice(mut e, mut ab, render, filerow, e.coloff,
+						len, false)
+				} else {
+					visible_start := e.coloff
+					visible_end := e.coloff + len
+					left_end := if sel_start > visible_start { sel_start } else { visible_start }
+					right_start := if sel_end < visible_end { sel_end } else { visible_end }
+					editor_append_line_slice(mut e, mut ab, render, filerow, visible_start,
+						left_end - visible_start, false)
+					editor_append_line_slice(mut e, mut ab, render, filerow, left_end,
+						right_start - left_end, true)
+					editor_append_line_slice(mut e, mut ab, render, filerow, right_start,
+						visible_end - right_start, false)
+				}
+				used += len
+			}
+		}
+		for _ in used .. rect.width {
+			ab.write_u8(` `)
+		}
+	}
+	ab.write_string(term_move(rect.row + e.screenrows, rect.col))
+	editor_draw_status_bar(mut e, mut ab)
+	mut cursor_y := rect.row + (e.cy - e.rowoff)
+	mut cursor_x := rect.col + editor_line_gutter_width(e) + (e.rx - e.coloff)
+	mut cursor_visible := cursor_y >= rect.row && cursor_y < rect.row + e.screenrows
+		&& cursor_x >= rect.col && cursor_x < rect.col + rect.width
+	if e.command_mode {
+		cursor_y = rect.row + e.screenrows
+		cursor_x = rect.col + editor_footer_caret_column(mut e) - 1
+		cursor_visible = true
+	}
+	if cursor_y < rect.row {
+		cursor_y = rect.row
+	}
+	if cursor_y > rect.row + rect.height - 1 {
+		cursor_y = rect.row + rect.height - 1
+	}
+	if cursor_x < rect.col {
+		cursor_x = rect.col
+	}
+	if cursor_x > rect.col + rect.width - 1 {
+		cursor_x = rect.col + rect.width - 1
+	}
+	return ScreenCursor{
+		row:     cursor_y
+		col:     cursor_x
+		visible: cursor_visible
+	}
 }
 
 fn editor_set_status_message(mut e EditorConfig, msg string) {
@@ -1085,7 +1481,9 @@ fn editor_submit_prompt(mut e EditorConfig) bool {
 	editor_end_prompt(mut e)
 	match kind {
 		.command {
-			return editor_run_command(mut e, input)
+			e.submitted_command = input
+			e.has_submitted_command = true
+			return true
 		}
 		.search {
 			return true
@@ -1224,8 +1622,7 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 	match cmd {
 		'q', 'quit', 'exit', 'x' {
 			if e.dirty > 0 {
-				editor_set_status_message(mut e,
-					'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
+				editor_set_status_message(mut e, 'Unsaved changes. Use :q! (quit!) or Ctrl-Q to force.')
 				return true
 			}
 			print('\x1b[2J')
@@ -1314,19 +1711,16 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			editor_set_status_message(mut e, 'Moved to line ${target + 1}')
 		}
 		'help' {
-			editor_set_status_message(mut e,
-				'open/o open!/o! w/wq write/save saveas find goto/g syntax quit/exit/x quit! help')
+			editor_set_status_message(mut e, 'open/o right/left/top/bottom buffer/b bnext/bprev close git refresh write/save find goto/g syntax quit')
 		}
 		'syntax' {
 			editor_ensure_syntax(mut e)
 			if e.hl_disable {
-				editor_set_status_message(mut e,
-					'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
+				editor_set_status_message(mut e, 'Syntax highlighting disabled. Unset NO_COLOR, VRO_NO_HL, or use VRO_FORCE_COLOR=1.')
 			} else if e.hl_syn.rules.len == 0 {
 				editor_set_status_message(mut e, 'Syntax: none for ${e.filename}')
 			} else {
-				editor_set_status_message(mut e,
-					'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
+				editor_set_status_message(mut e, 'Syntax: ${e.hl_syn.rules.len} rules from ${e.hl_source}')
 			}
 		}
 		else {
@@ -1919,20 +2313,24 @@ fn editor_scroll_mouse(mut e EditorConfig, direction tui.Direction) {
 		.down {
 			if e.rowoff + e.screenrows < e.rows.len {
 				e.rowoff++
+				e.follow_cursor = false
 			}
 		}
 		.up {
 			if e.rowoff > 0 {
 				e.rowoff--
+				e.follow_cursor = false
 			}
 		}
 		.left {
 			if e.coloff > 0 {
 				e.coloff--
+				e.follow_cursor = false
 			}
 		}
 		.right {
 			e.coloff++
+			e.follow_cursor = false
 		}
 		.unknown {}
 	}
@@ -1961,16 +2359,47 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	e.quit_times_left--
 	if e.quit_times_left > 0 {
 		press_word := if e.quit_times_left == 1 { 'press' } else { 'presses' }
-		editor_set_status_message(mut e,
-			'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
+		editor_set_status_message(mut e, 'Unsaved (${e.quit_times_left} more Ctrl-Q ${press_word} forces quit)')
 		return true
 	}
 	return false
 }
 
+fn editor_write_system_clipboard(text string) bool {
+	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
+		return false
+	}
+	mut cb := clipboard.new()
+	defer {
+		cb.destroy()
+	}
+	if !cb.is_available() {
+		return false
+	}
+	return cb.copy(text)
+}
+
+fn editor_read_system_clipboard() string {
+	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
+		return ''
+	}
+	mut cb := clipboard.new()
+	defer {
+		cb.destroy()
+	}
+	if !cb.is_available() {
+		return ''
+	}
+	return cb.paste()
+}
+
 fn editor_insert_text(mut e EditorConfig, text string) {
 	for b in text.bytes() {
-		editor_insert_char(mut e, b)
+		if b == `\n` {
+			editor_insert_newline(mut e)
+		} else if b != `\r` {
+			editor_insert_char(mut e, b)
+		}
 	}
 }
 
@@ -1986,9 +2415,38 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	if c == ctrl_key(`q`) {
 		return editor_handle_ctrl_q(mut e)
 	}
+	if c == ctrl_key(`z`) {
+		editor_undo(mut e)
+		return true
+	}
+	if c == ctrl_key(`y`) {
+		editor_redo(mut e)
+		return true
+	}
+	if c == ctrl_key(`c`) {
+		editor_copy_selection(mut e)
+		return true
+	}
+	snap_before := editor_snapshot(e)
+	text_before := snap_before.text
 	dirty_before := e.dirty
 	match c {
+		ctrl_key(`x`) {
+			editor_complete_reset(mut e)
+			editor_cut_selection(mut e)
+		}
+		ctrl_key(`v`) {
+			mut paste_text := editor_read_system_clipboard()
+			if paste_text.len == 0 {
+				paste_text = e.clipboard
+			}
+			if paste_text.len > 0 {
+				editor_complete_reset(mut e)
+				editor_insert_text(mut e, paste_text)
+			}
+		}
 		int(`\r`), int(`\n`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
 		}
@@ -2004,19 +2462,23 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			}
 		}
 		ctrl_key(`n`) {
+			e.follow_cursor = true
 			editor_cycle_word_completion(mut e)
 		}
 		int(`\t`) {
+			e.follow_cursor = true
 			if !editor_try_emmet_tab(mut e) {
 				editor_insert_tab_or_spaces(mut e)
 			}
 		}
 		key_home {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			e.cx = 0
 		}
 		key_end {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			if e.cy < e.rows.len {
@@ -2025,6 +2487,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		}
 		ctrl_key(`l`), int(`\x1b`) {}
 		key_page_up, key_page_down {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			if c == key_page_up {
@@ -2044,11 +2507,13 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			}
 		}
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_clear_selection(mut e)
 			editor_move_cursor(mut e, c)
 		}
 		key_shift_arrow_up, key_shift_arrow_down, key_shift_arrow_left, key_shift_arrow_right {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_begin_keyboard_selection(mut e)
 			editor_move_cursor(mut e, match c {
@@ -2060,6 +2525,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_update_selection_cursor(mut e)
 		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			if c == key_del && !e.selection_active {
 				editor_move_cursor(mut e, key_arrow_right)
@@ -2067,32 +2533,42 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_del_char(mut e)
 		}
 		key_delete_word_backward, ctrl_key(`w`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_word_backward(mut e)
 		}
 		key_delete_word_forward {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_word_forward(mut e)
 		}
 		key_delete_line {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_line_before_cursor(mut e)
 		}
 		ctrl_key(`u`) {
+			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_delete_line_before_cursor(mut e)
 		}
 		else {
 			if text.len > 0 {
+				e.follow_cursor = true
 				editor_complete_reset(mut e)
 				editor_insert_text(mut e, text)
 			} else if c >= 32 && c <= 126 {
+				e.follow_cursor = true
 				editor_complete_reset(mut e)
 				editor_insert_char(mut e, u8(c))
 			}
 		}
 	}
 
+	if editor_rows_to_string(e) != text_before {
+		e.undo_stack << snap_before
+		e.redo_stack = []EditorSnapshot{}
+	}
 	if e.dirty != dirty_before || e.dirty == 0 {
 		e.quit_times_left = quit_times
 	}
@@ -2102,9 +2578,220 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 struct VroApp {
 mut:
 	tui          &tui.Context = unsafe { nil }
-	editor       EditorConfig
+	buffers      []EditorConfig
+	panes        []EditorPane
+	active_pane  int
+	screenrows   int
+	screencols   int
 	needs_redraw bool = true
 	should_quit  bool
+}
+
+fn editor_new() EditorConfig {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+		hl_disable:      os.getenv('VRO_NO_HL') == '1'
+	}
+	if os.getenv('VRO_FORCE_COLOR') != '1' && os.getenv('NO_COLOR').len > 0 {
+		e.hl_disable = true
+	}
+	return e
+}
+
+fn vro_app_new() VroApp {
+	mut app := VroApp{
+		screenrows: 24
+		screencols: 80
+	}
+	vro_app_ensure_default_buffer(mut app)
+	return app
+}
+
+fn vro_app_ensure_default_buffer(mut app VroApp) {
+	if app.buffers.len == 0 {
+		app.buffers << editor_new()
+	}
+	if app.panes.len == 0 {
+		app.panes << EditorPane{
+			buffer: 0
+			split:  .root
+		}
+		app.active_pane = 0
+	}
+}
+
+fn app_active_buffer_index(app VroApp) int {
+	if app.panes.len == 0 || app.active_pane < 0 || app.active_pane >= app.panes.len {
+		return 0
+	}
+	idx := app.panes[app.active_pane].buffer
+	if idx < 0 || idx >= app.buffers.len {
+		return 0
+	}
+	return idx
+}
+
+fn app_active_editor(mut app VroApp) EditorConfig {
+	vro_app_ensure_default_buffer(mut app)
+	return app.buffers[app_active_buffer_index(app)]
+}
+
+fn app_set_status_message(mut app VroApp, msg string) {
+	idx := app_active_buffer_index(app)
+	editor_set_status_message(mut app.buffers[idx], msg)
+}
+
+fn app_open_file_as_buffer(mut app VroApp, path string) int {
+	mut e := editor_new()
+	editor_open(mut e, path) or {
+		e.filename = path
+		editor_set_status_message(mut e, 'New file: ${path}')
+	}
+	app.buffers << e
+	return app.buffers.len - 1
+}
+
+fn vro_app_open_args(mut app VroApp, files []string) {
+	app.buffers = []EditorConfig{}
+	app.panes = []EditorPane{}
+	app.active_pane = 0
+	if files.len == 0 {
+		vro_app_ensure_default_buffer(mut app)
+		return
+	}
+	for path in files {
+		app_open_file_as_buffer(mut app, path)
+	}
+	app.panes << EditorPane{
+		buffer: 0
+		split:  .root
+	}
+}
+
+fn app_command_parts(input string) (string, string) {
+	cmdline := input.trim_space()
+	if cmdline.len == 0 {
+		return '', ''
+	}
+	parts := cmdline.split(' ')
+	cmd := parts[0].to_lower()
+	args := if parts.len > 1 { cmdline[cmd.len + 1..].trim_space() } else { '' }
+	return cmd, args
+}
+
+fn is_terminal_command_name(s string) bool {
+	return s in ['sh', 'bash', 'zsh', 'fish', 'nu']
+}
+
+fn app_split_open(mut app VroApp, split EditorPaneSplit, path string) bool {
+	if path.len == 0 {
+		app_set_status_message(mut app, 'Usage: split <path>')
+		return true
+	}
+	if is_terminal_command_name(path) {
+		app_set_status_message(mut app, 'Terminal panes are not supported yet')
+		return true
+	}
+	buf := app_open_file_as_buffer(mut app, path)
+	app.panes.insert(app.active_pane + 1, EditorPane{
+		buffer: buf
+		split:  split
+	})
+	app.active_pane++
+	app_set_status_message(mut app, 'Opened ${path}')
+	return true
+}
+
+fn app_switch_buffer(mut app VroApp, target int) {
+	if target < 0 || target >= app.buffers.len {
+		app_set_status_message(mut app, 'Invalid buffer')
+		return
+	}
+	app.panes[app.active_pane].buffer = target
+	editor_set_status_message(mut app.buffers[target], 'Buffer ${target + 1}/${app.buffers.len}')
+}
+
+fn app_run_command(mut app VroApp, input string) bool {
+	vro_app_ensure_default_buffer(mut app)
+	cmd, args := app_command_parts(input)
+	if cmd.len == 0 {
+		return true
+	}
+	match cmd {
+		'left' {
+			return app_split_open(mut app, .left, args)
+		}
+		'right' {
+			return app_split_open(mut app, .right, args)
+		}
+		'top' {
+			return app_split_open(mut app, .top, args)
+		}
+		'bottom' {
+			return app_split_open(mut app, .bottom, args)
+		}
+		'buffer', 'b' {
+			if args.len == 0 {
+				app_set_status_message(mut app, 'Usage: buffer <n|path>')
+				return true
+			}
+			if is_unsigned_decimal_int_string(args) {
+				app_switch_buffer(mut app, args.int() - 1)
+				return true
+			}
+			for i, b in app.buffers {
+				if b.filename == args || os.base(b.filename) == args {
+					app_switch_buffer(mut app, i)
+					return true
+				}
+			}
+			app_set_status_message(mut app, 'No buffer: ${args}')
+			return true
+		}
+		'bnext', 'bn' {
+			app_switch_buffer(mut app, (app_active_buffer_index(app) + 1) % app.buffers.len)
+			return true
+		}
+		'bprev', 'bp' {
+			cur := app_active_buffer_index(app)
+			next := if cur == 0 { app.buffers.len - 1 } else { cur - 1 }
+			app_switch_buffer(mut app, next)
+			return true
+		}
+		'close' {
+			if app.panes.len > 1 {
+				app.panes.delete(app.active_pane)
+				if app.active_pane >= app.panes.len {
+					app.active_pane = app.panes.len - 1
+				}
+			} else {
+				app_set_status_message(mut app, 'Cannot close last pane')
+			}
+			return true
+		}
+		'git' {
+			if args == 'refresh' || args.len == 0 {
+				app_set_status_message(mut app, 'Git gutter refresh is disabled')
+			} else {
+				app_set_status_message(mut app, 'Usage: git refresh')
+			}
+			return true
+		}
+		else {}
+	}
+	idx := app_active_buffer_index(app)
+	return editor_run_command(mut app.buffers[idx], input)
+}
+
+fn app_consume_submitted_command(mut app VroApp) bool {
+	idx := app_active_buffer_index(app)
+	if !app.buffers[idx].has_submitted_command {
+		return true
+	}
+	cmd := app.buffers[idx].submitted_command
+	app.buffers[idx].submitted_command = ''
+	app.buffers[idx].has_submitted_command = false
+	return app_run_command(mut app, cmd)
 }
 
 fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
@@ -2118,6 +2805,248 @@ fn editor_sync_terminal_size(mut e EditorConfig, width int, height int) {
 	}
 	e.screenrows = rows
 	e.screencols = cols
+}
+
+fn app_sync_terminal_size(mut app VroApp, width int, height int) {
+	app.screencols = if width < 1 { 1 } else { width }
+	app.screenrows = if height < 1 { 1 } else { height }
+	if app.panes.len <= 1 {
+		idx := app_active_buffer_index(app)
+		editor_sync_terminal_size(mut app.buffers[idx], width, height)
+	}
+}
+
+fn app_layout_rects(app VroApp) []PaneRect {
+	width := if app.screencols < 1 { 1 } else { app.screencols }
+	height := if app.screenrows < 1 { 1 } else { app.screenrows }
+	if app.panes.len <= 1 {
+		return [
+			PaneRect{
+				row:    1
+				col:    1
+				width:  width
+				height: height
+			},
+		]
+	}
+	if app.panes.len == 2 {
+		second := app.panes[1].split
+		match second {
+			.right {
+				left_w := width / 2
+				right_w := width - left_w
+				return [
+					PaneRect{
+						row:    1
+						col:    1
+						width:  left_w
+						height: height
+					},
+					PaneRect{
+						row:    1
+						col:    left_w + 1
+						width:  right_w
+						height: height
+					},
+				]
+			}
+			.left {
+				left_w := width / 2
+				right_w := width - left_w
+				return [
+					PaneRect{
+						row:    1
+						col:    left_w + 1
+						width:  right_w
+						height: height
+					},
+					PaneRect{
+						row:    1
+						col:    1
+						width:  left_w
+						height: height
+					},
+				]
+			}
+			.top {
+				top_h := height / 2
+				bottom_h := height - top_h
+				return [
+					PaneRect{
+						row:    top_h + 1
+						col:    1
+						width:  width
+						height: bottom_h
+					},
+					PaneRect{
+						row:    1
+						col:    1
+						width:  width
+						height: top_h
+					},
+				]
+			}
+			else {
+				top_h := height / 2
+				bottom_h := height - top_h
+				return [
+					PaneRect{
+						row:    1
+						col:    1
+						width:  width
+						height: top_h
+					},
+					PaneRect{
+						row:    top_h + 1
+						col:    1
+						width:  width
+						height: bottom_h
+					},
+				]
+			}
+		}
+	}
+	mut rects := []PaneRect{}
+	mut remaining := height
+	for pi in 0 .. app.panes.len {
+		mut pane_h := remaining / (app.panes.len - pi)
+		if pane_h < 1 {
+			pane_h = 1
+		}
+		rects << PaneRect{
+			row:    height - remaining + 1
+			col:    1
+			width:  width
+			height: pane_h
+		}
+		remaining -= pane_h
+	}
+	return rects
+}
+
+fn app_build_screen(mut app VroApp) string {
+	vro_app_ensure_default_buffer(mut app)
+	if app.panes.len <= 1 {
+		idx := app_active_buffer_index(app)
+		editor_sync_terminal_size(mut app.buffers[idx], app.screencols, app.screenrows)
+		return editor_build_screen(mut app.buffers[idx])
+	}
+	mut ab := strings.new_builder(4096)
+	ab.write_string('\x1b[?25l')
+	ab.write_string('\x1b[H\x1b[J')
+	rects := app_layout_rects(app)
+	mut cursor := ScreenCursor{
+		row:     1
+		col:     1
+		visible: false
+	}
+	for pi, pane in app.panes {
+		idx := if pane.buffer >= 0 && pane.buffer < app.buffers.len { pane.buffer } else { 0 }
+		if pi < rects.len {
+			next_cursor := editor_draw_at(mut app.buffers[idx], mut ab, rects[pi])
+			if pi == app.active_pane {
+				cursor = next_cursor
+			}
+		}
+	}
+	if cursor.visible {
+		ab.write_string(term_move(cursor.row, cursor.col))
+		ab.write_string('\x1b[?25h')
+	}
+	return ab.str()
+}
+
+fn app_pane_at(app VroApp, row int, col int) (int, PaneRect) {
+	rects := app_layout_rects(app)
+	for i, rect in rects {
+		if row >= rect.row && row < rect.row + rect.height && col >= rect.col
+			&& col < rect.col + rect.width {
+			return i, rect
+		}
+	}
+	if app.active_pane >= 0 && app.active_pane < rects.len {
+		return app.active_pane, rects[app.active_pane]
+	}
+	if rects.len > 0 {
+		return 0, rects[0]
+	}
+	return 0, PaneRect{
+		row:    1
+		col:    1
+		width:  app.screencols
+		height: app.screenrows
+	}
+}
+
+fn app_local_mouse(app VroApp, row int, col int) MouseTarget {
+	pane, rect := app_pane_at(app, row, col)
+	local_row := row - rect.row + 1
+	local_col := col - rect.col + 1
+	return MouseTarget{
+		pane:      pane
+		local_row: local_row
+		local_col: local_col
+		rect:      rect
+	}
+}
+
+fn app_prepare_mouse_editor(mut app VroApp, pane int, rect PaneRect) int {
+	if pane >= 0 && pane < app.panes.len {
+		app.active_pane = pane
+	}
+	idx := app_active_buffer_index(app)
+	app.buffers[idx].screencols = rect.width
+	app.buffers[idx].screenrows = rect.height - 1
+	if app.buffers[idx].screenrows < 1 {
+		app.buffers[idx].screenrows = 1
+	}
+	return idx
+}
+
+fn app_mouse_down(mut app VroApp, row int, col int, extend bool) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_begin_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		extend)
+}
+
+fn app_mouse_drag(mut app VroApp, row int, col int) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		false)
+}
+
+fn app_mouse_up(mut app VroApp, row int, col int) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_drag_mouse_selection(mut app.buffers[idx], target.local_row, target.local_col,
+		false)
+	editor_end_mouse_selection(mut app.buffers[idx])
+}
+
+fn app_mouse_scroll(mut app VroApp, row int, col int, dir tui.Direction) {
+	target := app_local_mouse(app, row, col)
+	idx := app_prepare_mouse_editor(mut app, target.pane, target.rect)
+	editor_scroll_mouse(mut app.buffers[idx], dir)
+}
+
+fn app_process_key(mut app VroApp, key int, text string) bool {
+	idx := app_active_buffer_index(app)
+	keep := editor_process_key(mut app.buffers[idx], key, text)
+	if !keep {
+		return false
+	}
+	return app_consume_submitted_command(mut app)
+}
+
+fn app_process_local_termui_bytes(mut app VroApp, text string) bool {
+	idx := app_active_buffer_index(app)
+	keep := editor_process_local_termui_bytes(mut app.buffers[idx], text)
+	if !keep {
+		return false
+	}
+	return app_consume_submitted_command(mut app)
 }
 
 fn tui_key_to_editor_key(ev &tui.Event) int {
@@ -2363,11 +3292,11 @@ fn vro_event(ev &tui.Event, x voidptr) {
 			mut keep_running := true
 			if !ev.modifiers.has(.ctrl) && !ev.modifiers.has(.alt)
 				&& tui_text_has_control_bytes(ev.utf8) {
-				keep_running = editor_process_local_termui_bytes(mut app.editor, ev.utf8)
+				keep_running = app_process_local_termui_bytes(mut app, ev.utf8)
 			} else {
 				key := tui_key_to_editor_key(ev)
 				text := tui_key_text(ev)
-				keep_running = editor_process_key(mut app.editor, key, text)
+				keep_running = app_process_key(mut app, key, text)
 			}
 			if !keep_running {
 				app.should_quit = true
@@ -2376,19 +3305,18 @@ fn vro_event(ev &tui.Event, x voidptr) {
 		}
 		.mouse_down {
 			if ev.button == .left {
-				editor_begin_mouse_selection(mut app.editor, ev.y, ev.x, ev.modifiers.has(.shift))
+				app_mouse_down(mut app, ev.y, ev.x, ev.modifiers.has(.shift))
 				app.needs_redraw = true
 			}
 		}
 		.mouse_drag {
 			if ev.button == .left {
-				editor_drag_mouse_selection(mut app.editor, ev.y, ev.x, false)
+				app_mouse_drag(mut app, ev.y, ev.x)
 				app.needs_redraw = true
 			}
 		}
 		.mouse_up {
-			editor_drag_mouse_selection(mut app.editor, ev.y, ev.x, false)
-			editor_end_mouse_selection(mut app.editor)
+			app_mouse_up(mut app, ev.y, ev.x)
 			app.needs_redraw = true
 		}
 		.mouse_scroll {
@@ -2398,11 +3326,11 @@ fn vro_event(ev &tui.Event, x voidptr) {
 			if dir == .unknown {
 				dir = ev.direction
 			}
-			editor_scroll_mouse(mut app.editor, dir)
+			app_mouse_scroll(mut app, ev.y, ev.x, dir)
 			app.needs_redraw = true
 		}
 		.resized {
-			editor_sync_terminal_size(mut app.editor, ev.width, ev.height)
+			app_sync_terminal_size(mut app, ev.width, ev.height)
 			vro_apply_mouse_mode()
 			app.needs_redraw = true
 		}
@@ -2436,14 +3364,14 @@ fn vro_exit(x voidptr) {
 
 fn vro_frame(x voidptr) {
 	mut app := unsafe { &VroApp(x) }
-	editor_sync_terminal_size(mut app.editor, app.tui.window_width, app.tui.window_height)
+	app_sync_terminal_size(mut app, app.tui.window_width, app.tui.window_height)
 	if !app.needs_redraw {
 		if app.should_quit {
 			vro_exit(x)
 		}
 		return
 	}
-	app.tui.write(editor_build_screen(mut app.editor))
+	app.tui.write(app_build_screen(mut app))
 	app.tui.flush()
 	app.needs_redraw = false
 	if app.should_quit {
@@ -2459,20 +3387,22 @@ fn print_vro_help() {
 	println('vro ${vro_version} — minimal terminal text editor')
 	println('')
 	println('Usage:')
-	println('  vro [options] [file]')
+	println('  vro [options] [file ...]')
 	println('')
 	println('Options:')
 	println('  -h, -help, --help     Show this help and exit')
 	println('  -version, --version   Print version and exit')
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
+	println('Ctrl-C/Ctrl-X/Ctrl-V use the system clipboard with an internal fallback. Ctrl-Z/Ctrl-Y undo and redo.')
 	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; double-click selects word; triple-click selects sentence.')
 	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Delete deletes next word; Ctrl-W/Option-Delete deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
-	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
+	println('VRO_NO_MOUSE=1 disables mouse. VRO_NO_SYSTEM_CLIPBOARD=1 disables OS clipboard integration.')
+	println('NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')
-	println('With a file path, opens that file. Run without arguments to start an empty buffer.')
+	println('With file paths, opens them as buffers. Run without arguments to start an empty buffer.')
 }
 
 fn cli_early_exit(args []string) bool {
@@ -2501,19 +3431,7 @@ fn main() {
 	}
 
 	mut app := &VroApp{}
-	app.editor.quit_times_left = quit_times
-	app.editor.hl_disable = os.getenv('VRO_NO_HL') == '1'
-	if os.getenv('VRO_FORCE_COLOR') != '1' && os.getenv('NO_COLOR').len > 0 {
-		app.editor.hl_disable = true
-	}
-
-	if args.len >= 2 {
-		editor_open(mut app.editor, args[1]) or {
-			// File does not exist – start with an empty buffer; filename
-			// is already set by editor_open so the user can save to it.
-			editor_set_status_message(mut app.editor, 'New file: ${args[1]}')
-		}
-	}
+	vro_app_open_args(mut app, args[1..])
 
 	app.tui = tui.init(
 		user_data:            app
@@ -2524,7 +3442,7 @@ fn main() {
 		window_title:         'vro'
 		hide_cursor:          false
 		capture_events:       true
-		buffer_size:          4096
+		buffer_size:          tui_buffer_size
 		frame_rate:           120
 		use_alternate_buffer: true
 	)

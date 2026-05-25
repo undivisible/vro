@@ -41,10 +41,10 @@ fn syntax_runtime_dirs() []string {
 			}
 		}
 	}
-	dirs << syntax_user_dir()
 	dirs << os.join_path(os.getwd(), 'syntax')
-	dirs << syntax_data_home_dir()
 	dirs << syntax_executable_dirs()
+	dirs << syntax_data_home_dir()
+	dirs << syntax_user_dir()
 	dirs << '/opt/homebrew/share/vro/syntax'
 	dirs << '/usr/local/share/vro/syntax'
 	dirs << '/usr/share/vro/syntax'
@@ -125,7 +125,9 @@ struct YamlRule {
 }
 
 struct CompiledPat {
-	group string
+	group         string
+	word_boundary bool
+	start_line    bool
 mut:
 	re regex.RE
 }
@@ -133,10 +135,12 @@ mut:
 struct CompiledReg {
 	group string
 mut:
-	st       regex.RE
-	en       regex.RE
-	sk       regex.RE
-	has_skip bool
+	st         regex.RE
+	en         regex.RE
+	sk         regex.RE
+	has_skip   bool
+	start_line bool
+	end_line   bool
 }
 
 enum CompRuleKind {
@@ -213,6 +217,35 @@ fn compile_one_re(pat string) !regex.RE {
 	return re
 }
 
+fn is_syntax_word_byte(b u8) bool {
+	return (b >= `a` && b <= `z`) || (b >= `A` && b <= `Z`) || (b >= `0` && b <= `9`) || b == `_`
+}
+
+fn is_syntax_word_boundary(line string, pos int) bool {
+	left := pos > 0 && is_syntax_word_byte(line[pos - 1])
+	right := pos < line.len && is_syntax_word_byte(line[pos])
+	return left != right
+}
+
+fn syntax_word_core_bounds(line string, start int, end int) (int, int, bool) {
+	mut first := -1
+	mut last := -1
+	mut i := start
+	for i < end && i < line.len {
+		if is_syntax_word_byte(line[i]) {
+			if first < 0 {
+				first = i
+			}
+			last = i + 1
+		}
+		i++
+	}
+	if first < 0 || last < first {
+		return start, end, false
+	}
+	return first, last, true
+}
+
 fn compile_maybe_re(pat string) ?regex.RE {
 	p2 := pat.replace('\\b', '')
 	p3 := patch_v_regex(p2)
@@ -223,11 +256,55 @@ fn compile_maybe_re(pat string) ?regex.RE {
 	return re
 }
 
-fn split_top_level_alternation(pat string) []string {
-	if pat.len < 3 || pat[0] != `(` || pat[pat.len - 1] != `)` {
-		return [pat]
+fn find_first_regex_group(pat string) (int, int, bool) {
+	mut open := -1
+	mut close := -1
+	mut depth := 0
+	mut in_class := false
+	mut escaped := false
+	for i, ch in pat {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == `\\` {
+			escaped = true
+			continue
+		}
+		if in_class {
+			if ch == `]` {
+				in_class = false
+			}
+			continue
+		}
+		match ch {
+			`[` {
+				in_class = true
+			}
+			`(` {
+				if depth == 0 && open < 0 {
+					open = i
+				}
+				depth++
+			}
+			`)` {
+				if depth > 0 {
+					depth--
+					if depth == 0 {
+						close = i
+					}
+				}
+			}
+			else {}
+		}
 	}
-	inner := pat[1..pat.len - 1]
+	if open < 0 || close <= open {
+		return 0, 0, false
+	}
+	return open, close, true
+}
+
+fn split_alternation_parts(inner string) []string {
 	mut parts := []string{}
 	mut start := 0
 	mut depth := 0
@@ -269,11 +346,34 @@ fn split_top_level_alternation(pat string) []string {
 			else {}
 		}
 	}
-	if parts.len == 0 {
-		return [pat]
-	}
 	parts << inner[start..]
 	return parts
+}
+
+fn expand_regex_groups(pat string) []string {
+	open, close, ok := find_first_regex_group(pat)
+	if !ok {
+		return [pat]
+	}
+	prefix := pat[..open]
+	mut suffix := pat[close + 1..]
+	inner := pat[open + 1..close]
+	mut parts := split_alternation_parts(inner)
+	mut include_empty := false
+	if suffix.len > 0 && suffix[0] == `?` {
+		suffix = suffix[1..]
+		include_empty = true
+	}
+	if include_empty {
+		parts << ''
+	}
+	mut out := []string{}
+	for part in parts {
+		for expanded in expand_regex_groups(prefix + part + suffix) {
+			out << expanded
+		}
+	}
+	return out
 }
 
 fn compile_syntax_from_yaml(src string) !CompiledSyntax {
@@ -282,14 +382,16 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 	for r in rules {
 		match r.kind {
 			.pat {
-				for part in split_top_level_alternation(r.pat) {
+				for part in expand_regex_groups(r.pat) {
 					re := compile_one_re(part) or { continue }
 					out.rules << CompiledRule{
 						kind:  .pat
 						group: r.group
 						pat:   CompiledPat{
-							group: r.group
-							re:    re
+							group:         r.group
+							word_boundary: part.contains('\\b')
+							start_line:    part.starts_with('^')
+							re:            re
 						}
 					}
 				}
@@ -309,11 +411,13 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 					kind:  .reg
 					group: r.group
 					reg:   CompiledReg{
-						group:    r.group
-						st:       st
-						en:       en
-						sk:       skre
-						has_skip: hsk
+						group:      r.group
+						st:         st
+						en:         en
+						sk:         skre
+						has_skip:   hsk
+						start_line: r.st.starts_with('^')
+						end_line:   r.en == '$'
 					}
 				}
 			}
@@ -464,10 +568,13 @@ fn group_to_ansi(group string) string {
 
 // Find end pattern from search (same skip rules as micro-style regions).
 fn hl_region_find_end(mut cr CompiledReg, line string, search int) int {
+	if cr.end_line {
+		return line.len
+	}
 	mut s := search
 	for s <= line.len {
 		es2, ee2 := cr.en.find_from(line, s)
-		if es2 >= 0 && ee2 > es2 {
+		if es2 >= 0 && ee2 >= es2 {
 			return ee2
 		}
 		if cr.has_skip {
@@ -490,24 +597,23 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 		end_abs := hl_region_find_end(mut cr, line, 0)
 		if end_abs < 0 {
 			for k := 0; k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = cr.group
-				}
+				owners[k] = ri
+				groups[k] = cr.group
 			}
 			return true
 		}
 		for k := 0; k < end_abs && k < line.len; k++ {
-			if owners[k] == -1 {
-				owners[k] = ri
-				groups[k] = cr.group
-			}
+			owners[k] = ri
+			groups[k] = cr.group
 		}
 		pos = end_abs
 	}
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
 		if st < 0 {
+			break
+		}
+		if cr.start_line && st != 0 {
 			break
 		}
 		if en <= st {
@@ -518,18 +624,14 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 		end_abs := hl_region_find_end(mut cr, line, search)
 		if end_abs < 0 {
 			for k := st; k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = cr.group
-				}
+				owners[k] = ri
+				groups[k] = cr.group
 			}
 			return true
 		}
 		for k := st; k < end_abs && k < line.len; k++ {
-			if owners[k] == -1 {
-				owners[k] = ri
-				groups[k] = cr.group
-			}
+			owners[k] = ri
+			groups[k] = cr.group
 		}
 		pos = end_abs
 	}
@@ -549,6 +651,9 @@ fn hl_reg_carry_through_line(mut cr CompiledReg, line string, carry_in bool) boo
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
 		if st < 0 {
+			break
+		}
+		if cr.start_line && st != 0 {
 			break
 		}
 		if en <= st {
@@ -592,7 +697,22 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 			pos++
 			continue
 		}
-		for k := st; k < en && k < line.len; k++ {
+		if cp.start_line && st != 0 {
+			break
+		}
+		mut color_st := st
+		mut color_en := en
+		if cp.word_boundary {
+			word_st, word_en, has_word := syntax_word_core_bounds(line, st, en)
+			if !has_word || !is_syntax_word_boundary(line, word_st)
+				|| !is_syntax_word_boundary(line, word_en) {
+				pos = en
+				continue
+			}
+			color_st = word_st
+			color_en = word_en
+		}
+		for k := color_st; k < color_en && k < line.len; k++ {
 			if owners[k] == -1 {
 				owners[k] = ri
 				groups[k] = cp.group
@@ -622,6 +742,21 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 				carry_out[ri] = co
 			}
 		}
+	}
+	for ri := syn.rules.len - 1; ri >= 0; ri-- {
+		if syn.rules[ri].kind != .reg {
+			continue
+		}
+		mut r := syn.rules[ri].reg
+		if r.end_line {
+			continue
+		}
+		ci := if ri < carry_in.len { carry_in[ri] } else { false }
+		if ci {
+			continue
+		}
+		_ = hl_apply_region(mut owners, mut groups, line, ri, mut r, false)
+		syn.rules[ri].reg = r
 	}
 	return owners, groups, carry_out
 }
