@@ -21,7 +21,7 @@ rules:
     - symbol.operator: "\\b(i[ns])\\b"
     - symbol.operator: "[-+/*<>!=~*%&:|,.?]"
     - symbol.attribute:
-        start: "^\\["
+        start: "^@?\\["
         end: "\\]$"
         rules:
             - default: ".*"

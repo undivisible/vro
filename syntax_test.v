@@ -195,6 +195,7 @@ fn syntax_group_at_offset(mut syn CompiledSyntax, line string, needle string, of
 fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	src := os.read_file('syntax/v.yaml')!
 	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'fn') == 'type.keyword'
 	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", 'vro_version') == ''
 	assert syntax_group_at(mut syn, 'const key_arrow_left = 1000', 'key_arrow_left') == ''
 	assert syntax_group_at(mut syn, 'fn ctrl_key(c u8) int {', 'ctrl_key') == 'identifier.function'
@@ -215,6 +216,51 @@ fn test_bundled_v_line_comment_region_does_not_carry() {
 	assert !next.any(it)
 	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', 'return') != 'comment'
 	assert syntax_group_at(mut syn, 'return int(c & 0x1f)', '0x1f') == 'constant.number'
+}
+
+fn test_v_regions_override_keywords_and_numbers() {
+	src := os.read_file('syntax/v.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, '// SPDX-License-Identifier: MPL-2.0', 'SPDX') == 'comment'
+	assert syntax_group_at(mut syn, '// SPDX-License-Identifier: MPL-2.0', '2') == 'comment'
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", '1') == 'constant.string'
+	assert syntax_group_at(mut syn, "const vro_version = '1.0.5'", '.') == 'constant.string'
+}
+
+fn test_editor_render_highlights_v_when_forced_color() {
+	old_no_color := os.getenv('NO_COLOR')
+	old_force := os.getenv('VRO_FORCE_COLOR')
+	old_no_hl := os.getenv('VRO_NO_HL')
+	os.setenv('NO_COLOR', '1', true)
+	os.setenv('VRO_FORCE_COLOR', '1', true)
+	os.unsetenv('VRO_NO_HL')
+	defer {
+		if old_no_color.len > 0 {
+			os.setenv('NO_COLOR', old_no_color, true)
+		} else {
+			os.unsetenv('NO_COLOR')
+		}
+		if old_force.len > 0 {
+			os.setenv('VRO_FORCE_COLOR', old_force, true)
+		} else {
+			os.unsetenv('VRO_FORCE_COLOR')
+		}
+		if old_no_hl.len > 0 {
+			os.setenv('VRO_NO_HL', old_no_hl, true)
+		} else {
+			os.unsetenv('VRO_NO_HL')
+		}
+	}
+	mut e := editor_new()
+	e.filename = 'main.v'
+	editor_load_buffer_content(mut e, 'fn ctrl_key(c u8) int {\n\treturn int(c & 0x1f)\n}')
+	e.screencols = 80
+	e.screenrows = 3
+	out := editor_build_screen(mut e)
+	assert out.contains('\x1b[34mfn\x1b[0m') || out.contains('\x1b[35mfn\x1b[0m')
+	assert out.contains('\x1b[96mctrl_key\x1b[0m')
+	assert out.contains('u8')
+	assert out.contains('\x1b[36m0x1f\x1b[0m')
 }
 
 fn test_ui_sanitize_display() {
@@ -412,6 +458,15 @@ fn test_ctrl_u_deletes_to_line_start() {
 }
 
 fn test_ctrl_c_v_x_internal_clipboard() {
+	old := os.getenv('VRO_NO_SYSTEM_CLIPBOARD')
+	os.setenv('VRO_NO_SYSTEM_CLIPBOARD', '1', true)
+	defer {
+		if old.len > 0 {
+			os.setenv('VRO_NO_SYSTEM_CLIPBOARD', old, true)
+		} else {
+			os.unsetenv('VRO_NO_SYSTEM_CLIPBOARD')
+		}
+	}
 	mut row := Erow{
 		chars:  'alpha beta'.bytes()
 		render: []u8{}

@@ -5,6 +5,7 @@ import os
 import term.ui as tui
 import strings
 import time
+import clipboard
 
 const vro_version = '1.0.5'
 
@@ -556,7 +557,11 @@ fn editor_copy_selection(mut e EditorConfig) bool {
 		return false
 	}
 	e.clipboard = text
-	editor_set_status_message(mut e, 'Copied')
+	if editor_write_system_clipboard(text) {
+		editor_set_status_message(mut e, 'Copied')
+	} else {
+		editor_set_status_message(mut e, 'Copied to internal clipboard')
+	}
 	return true
 }
 
@@ -2360,6 +2365,34 @@ fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	return false
 }
 
+fn editor_write_system_clipboard(text string) bool {
+	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
+		return false
+	}
+	mut cb := clipboard.new()
+	defer {
+		cb.destroy()
+	}
+	if !cb.is_available() {
+		return false
+	}
+	return cb.copy(text)
+}
+
+fn editor_read_system_clipboard() string {
+	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
+		return ''
+	}
+	mut cb := clipboard.new()
+	defer {
+		cb.destroy()
+	}
+	if !cb.is_available() {
+		return ''
+	}
+	return cb.paste()
+}
+
 fn editor_insert_text(mut e EditorConfig, text string) {
 	for b in text.bytes() {
 		if b == `\n` {
@@ -2403,9 +2436,13 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			editor_cut_selection(mut e)
 		}
 		ctrl_key(`v`) {
-			if e.clipboard.len > 0 {
+			mut paste_text := editor_read_system_clipboard()
+			if paste_text.len == 0 {
+				paste_text = e.clipboard
+			}
+			if paste_text.len > 0 {
 				editor_complete_reset(mut e)
-				editor_insert_text(mut e, e.clipboard)
+				editor_insert_text(mut e, paste_text)
 			}
 		}
 		int(`\r`), int(`\n`) {
@@ -3357,12 +3394,13 @@ fn print_vro_help() {
 	println('  -version, --version   Print version and exit')
 	println('')
 	println('Editing: Tab indent; .html/.htm only: Tab expands tag at EOL (emmet-lite).')
-	println('Ctrl-C/Ctrl-X/Ctrl-V use vro internal clipboard. Ctrl-Z/Ctrl-Y undo and redo.')
+	println('Ctrl-C/Ctrl-X/Ctrl-V use the system clipboard with an internal fallback. Ctrl-Z/Ctrl-Y undo and redo.')
 	println('Ctrl-N cycles buffer word completions. Mouse: drag selects text; double-click selects word; triple-click selects sentence.')
 	println('Line numbers are shown in the left gutter.')
 	println('Ctrl-Delete deletes next word; Ctrl-W/Option-Delete deletes previous word; Ctrl-U deletes to line start. Shift-arrows select when terminal sends them.')
 	println('Ctrl-Q: quit; if buffer dirty, press Ctrl-Q three times to force quit (or save first).')
-	println('VRO_NO_MOUSE=1 disables mouse. NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
+	println('VRO_NO_MOUSE=1 disables mouse. VRO_NO_SYSTEM_CLIPBOARD=1 disables OS clipboard integration.')
+	println('NO_COLOR / VRO_NO_HL=1 disable highlighting; VRO_FORCE_COLOR=1 overrides NO_COLOR.')
 	println('')
 	println('With file paths, opens them as buffers. Run without arguments to start an empty buffer.')
 }

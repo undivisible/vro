@@ -134,11 +134,12 @@ mut:
 struct CompiledReg {
 	group string
 mut:
-	st       regex.RE
-	en       regex.RE
-	sk       regex.RE
-	has_skip bool
-	end_line bool
+	st         regex.RE
+	en         regex.RE
+	sk         regex.RE
+	has_skip   bool
+	start_line bool
+	end_line   bool
 }
 
 enum CompRuleKind {
@@ -255,15 +256,58 @@ fn compile_maybe_re(pat string) ?regex.RE {
 }
 
 fn split_top_level_alternation(pat string) []string {
-	if pat.len < 3 || pat[0] != `(` || pat[pat.len - 1] != `)` {
-		return [pat]
-	}
-	inner := pat[1..pat.len - 1]
-	mut parts := []string{}
-	mut start := 0
+	mut open := -1
+	mut close := -1
 	mut depth := 0
 	mut in_class := false
 	mut escaped := false
+	for i, ch in pat {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if ch == `\\` {
+			escaped = true
+			continue
+		}
+		if in_class {
+			if ch == `]` {
+				in_class = false
+			}
+			continue
+		}
+		match ch {
+			`[` {
+				in_class = true
+			}
+			`(` {
+				if depth == 0 && open < 0 {
+					open = i
+				}
+				depth++
+			}
+			`)` {
+				if depth > 0 {
+					depth--
+					if depth == 0 {
+						close = i
+					}
+				}
+			}
+			else {}
+		}
+	}
+	if open < 0 || close <= open {
+		return [pat]
+	}
+	prefix := pat[..open]
+	suffix := pat[close + 1..]
+	inner := pat[open + 1..close]
+	mut parts := []string{}
+	mut start := 0
+	depth = 0
+	in_class = false
+	escaped = false
 	for i, ch in inner {
 		if escaped {
 			escaped = false
@@ -304,7 +348,11 @@ fn split_top_level_alternation(pat string) []string {
 		return [pat]
 	}
 	parts << inner[start..]
-	return parts
+	mut out := []string{}
+	for part in parts {
+		out << prefix + part + suffix
+	}
+	return out
 }
 
 fn compile_syntax_from_yaml(src string) !CompiledSyntax {
@@ -341,12 +389,13 @@ fn compile_syntax_from_yaml(src string) !CompiledSyntax {
 					kind:  .reg
 					group: r.group
 					reg:   CompiledReg{
-						group:    r.group
-						st:       st
-						en:       en
-						sk:       skre
-						has_skip: hsk
-						end_line: r.en == '$'
+						group:      r.group
+						st:         st
+						en:         en
+						sk:         skre
+						has_skip:   hsk
+						start_line: r.st.starts_with('^')
+						end_line:   r.en == '$'
 					}
 				}
 			}
@@ -526,24 +575,23 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 		end_abs := hl_region_find_end(mut cr, line, 0)
 		if end_abs < 0 {
 			for k := 0; k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = cr.group
-				}
+				owners[k] = ri
+				groups[k] = cr.group
 			}
 			return true
 		}
 		for k := 0; k < end_abs && k < line.len; k++ {
-			if owners[k] == -1 {
-				owners[k] = ri
-				groups[k] = cr.group
-			}
+			owners[k] = ri
+			groups[k] = cr.group
 		}
 		pos = end_abs
 	}
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
 		if st < 0 {
+			break
+		}
+		if cr.start_line && st != 0 {
 			break
 		}
 		if en <= st {
@@ -554,18 +602,14 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 		end_abs := hl_region_find_end(mut cr, line, search)
 		if end_abs < 0 {
 			for k := st; k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = cr.group
-				}
+				owners[k] = ri
+				groups[k] = cr.group
 			}
 			return true
 		}
 		for k := st; k < end_abs && k < line.len; k++ {
-			if owners[k] == -1 {
-				owners[k] = ri
-				groups[k] = cr.group
-			}
+			owners[k] = ri
+			groups[k] = cr.group
 		}
 		pos = end_abs
 	}
@@ -585,6 +629,9 @@ fn hl_reg_carry_through_line(mut cr CompiledReg, line string, carry_in bool) boo
 	for pos < line.len {
 		st, en := cr.st.find_from(line, pos)
 		if st < 0 {
+			break
+		}
+		if cr.start_line && st != 0 {
 			break
 		}
 		if en <= st {
