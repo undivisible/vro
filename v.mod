@@ -1,5 +1,5 @@
 module main
 
 description 'Minimal terminal editor'
-version '1.0.6'
+version '1.1.0'
 license 'MPL-2.0'
