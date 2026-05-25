@@ -743,6 +743,21 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 			}
 		}
 	}
+	for ri := syn.rules.len - 1; ri >= 0; ri-- {
+		if syn.rules[ri].kind != .reg {
+			continue
+		}
+		mut r := syn.rules[ri].reg
+		if r.end_line {
+			continue
+		}
+		ci := if ri < carry_in.len { carry_in[ri] } else { false }
+		if ci {
+			continue
+		}
+		_ = hl_apply_region(mut owners, mut groups, line, ri, mut r, false)
+		syn.rules[ri].reg = r
+	}
 	return owners, groups, carry_out
 }
 
