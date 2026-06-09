@@ -7,7 +7,7 @@ import strings
 import time
 import clipboard
 
-const vro_version = '1.1.0'
+const vro_version = '1.1.1'
 
 const tab_stop = 4
 const quit_times = 3
@@ -2411,10 +2411,15 @@ fn editor_insert_text(mut e EditorConfig, text string) {
 
 fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	if e.command_mode {
-		if text.len > 0 && c != int(`\r`) && c != int(`\n`) && c != int(`\x1b`) && c != int(`\x7f`)
-			&& c != int(`\t`) {
-			editor_prompt_insert(mut e, text)
-			return true
+		if text.len > 0 {
+			if tui_text_has_control_bytes(text) {
+				return editor_process_local_termui_bytes(mut e, text)
+			}
+			if c != int(`\r`) && c != int(`\n`) && c != int(`\x1b`) && c != int(`\x7f`)
+				&& c != int(`\t`) && c != ctrl_key(`h`) {
+				editor_prompt_insert(mut e, text)
+				return true
+			}
 		}
 		return editor_prompt_key(mut e, c)
 	}
@@ -3091,10 +3096,8 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 		if ev.utf8 in ['\x1b[27u', '\x1b[27;1u'] {
 			return int(`\x1b`)
 		}
-		if ev.ascii == 127 || ev.ascii == 8 || ev.ascii == 0 {
-			if ev.utf8 == '\x7f' || ev.utf8 == '\x08' {
-				return int(`\x7f`)
-			}
+		if ev.ascii == 127 || ev.ascii == 8 {
+			return int(`\x7f`)
 		}
 	}
 	return match ev.code {

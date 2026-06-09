@@ -25,7 +25,7 @@ fn strip_ansi(s string) string {
 }
 
 fn test_vro_version() {
-	assert vro_version == '1.1.0'
+	assert vro_version == '1.1.1'
 }
 
 fn test_syntax_name_for_ext() {
@@ -343,6 +343,41 @@ fn test_escape_cancels_command_bar() {
 	assert editor_process_key(mut e, int(`\x1b`), '')
 	assert !e.command_mode
 	assert e.prompt_kind == .none
+}
+
+fn test_command_bar_backspace() {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	assert editor_command_bar(mut e)
+	assert editor_process_key(mut e, 0, 'abc')
+	assert e.prompt_text == 'abc'
+	assert editor_process_key(mut e, int(`\x7f`), '')
+	assert e.prompt_text == 'ab'
+	assert editor_process_local_termui_bytes(mut e, '\x7f')
+	assert e.prompt_text == 'a'
+	// BS byte (8) routed as ascii when utf8 is empty
+	editor_prompt_insert(mut e, 'bc')
+	assert editor_process_key(mut e, 8, '')
+	assert e.prompt_text == 'ab'
+}
+
+fn test_command_bar_backspace_control_text() {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	assert editor_command_bar(mut e)
+	editor_prompt_insert(mut e, 'abc')
+	assert editor_process_key(mut e, 0, '\x7f')
+	assert e.prompt_text == 'ab'
+}
+
+fn test_tui_backspace_ascii8_maps_to_delete() {
+	ev := tui.Event{
+		code:  .null
+		ascii: 8
+	}
+	assert tui_key_to_editor_key(&ev) == int(`\x7f`)
 }
 
 fn test_csi_u_escape_maps_to_escape_key() {
