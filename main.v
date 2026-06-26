@@ -7,7 +7,7 @@ import strings
 import time
 import clipboard
 
-const vro_version = '1.1.2'
+const vro_version = '1.1.3'
 
 const tab_stop = 4
 const quit_times = 3
@@ -3204,6 +3204,11 @@ fn tui_control_byte_to_editor_key(b u8) int {
 fn tui_csi_sequence_to_editor_key(seq string) int {
 	return match seq {
 		'\x1b[27u', '\x1b[27;1u' { int(`\x1b`) }
+		// Kitty keyboard protocol CSI u sequences (fallback for terminals
+		// where V's tui doesn't parse them and they reach the raw byte handler)
+		'\x1b[9u', '\x1b[9;1u' { int(`\t`) }
+		'\x1b[13u', '\x1b[13;1u' { int(`\r`) }
+		'\x1b[127u', '\x1b[127;1u', '\x1b[8u', '\x1b[8;1u' { int(`\x7f`) }
 		'\x1b[A', '\x1bOA', '\x1b[1;A' { key_arrow_up }
 		'\x1b[B', '\x1bOB', '\x1b[1;B' { key_arrow_down }
 		'\x1b[C', '\x1bOC', '\x1b[1;C' { key_arrow_right }
@@ -3312,7 +3317,13 @@ fn vro_event(ev &tui.Event, x voidptr) {
 	match ev.typ {
 		.key_down {
 			mut keep_running := true
-			if !ev.modifiers.has(.ctrl) && !ev.modifiers.has(.alt)
+			// When V's tui has already parsed the key (ev.code != .null), use the
+			// parsed event path. Only fall back to raw byte handling when the tui
+			// could not identify the key. This is critical for terminals using the
+			// Kitty keyboard protocol (e.g. Ghostty), where Enter is sent as
+			// \x1b[13u and V's tui correctly sets ev.code = .enter, but ev.utf8
+			// still contains the raw escape sequence with control bytes.
+			if !ev.modifiers.has(.ctrl) && !ev.modifiers.has(.alt) && ev.code == .null
 				&& tui_text_has_control_bytes(ev.utf8) {
 				keep_running = app_process_local_termui_bytes(mut app, ev.utf8)
 			} else {

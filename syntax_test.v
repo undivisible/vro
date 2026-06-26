@@ -25,7 +25,7 @@ fn strip_ansi(s string) string {
 }
 
 fn test_vro_version() {
-	assert vro_version == '1.1.2'
+	assert vro_version == '1.1.3'
 }
 
 fn test_syntax_name_for_ext() {
@@ -410,6 +410,97 @@ fn test_csi_u_escape_maps_to_escape_key() {
 		utf8: '\x1b[27u'
 	}
 	assert tui_key_to_editor_key(ev) == int(`\x1b`)
+}
+
+fn test_kitty_csi_u_enter_maps_to_return() {
+	// Ghostty sends Enter as \x1b[13u; V's tui parses it to ev.code = .enter
+	ev := tui.Event{
+		typ:  .key_down
+		code: .enter
+		utf8: '\x1b[13u'
+	}
+	assert tui_key_to_editor_key(ev) == int(`\r`)
+}
+
+fn test_kitty_csi_u_backspace_maps_to_delete() {
+	// Ghostty sends Backspace as \x1b[127u; V's tui parses it to ev.code = .backspace
+	ev := tui.Event{
+		typ:  .key_down
+		code: .backspace
+		utf8: '\x1b[127u'
+	}
+	assert tui_key_to_editor_key(ev) == int(`\x7f`)
+}
+
+fn test_kitty_csi_u_tab_maps_to_tab() {
+	ev := tui.Event{
+		typ:  .key_down
+		code: .tab
+		utf8: '\x1b[9u'
+	}
+	assert tui_key_to_editor_key(ev) == int(`\t`)
+}
+
+fn test_kitty_csi_u_fallback_in_csi_sequence_handler() {
+	// When V's tui doesn't parse the CSI u sequence (ev.code = .null),
+	// the raw byte handler should still recognize kitty protocol sequences.
+	assert tui_csi_sequence_to_editor_key('\x1b[13u') == int(`\r`)
+	assert tui_csi_sequence_to_editor_key('\x1b[127u') == int(`\x7f`)
+	assert tui_csi_sequence_to_editor_key('\x1b[9u') == int(`\t`)
+	assert tui_csi_sequence_to_editor_key('\x1b[8u') == int(`\x7f`)
+}
+
+fn test_kitty_enter_inserts_newline() {
+	// Simulates the full vro_event routing for a kitty protocol Enter key:
+	// ev.code = .enter (parsed by V's tui), ev.utf8 = "\x1b[13u" (raw bytes)
+	// The fix ensures this goes through tui_key_to_editor_key, not the raw byte handler.
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	mut row := Erow{
+		chars:  'hello'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	e.rows = [row]
+	e.cx = 5
+	ev := tui.Event{
+		typ:  .key_down
+		code: .enter
+		utf8: '\x1b[13u'
+	}
+	key := tui_key_to_editor_key(ev)
+	text := tui_key_text(ev)
+	assert key == int(`\r`)
+	assert text == ''
+	assert editor_process_key(mut e, key, text)
+	assert e.rows.len == 2
+	assert e.rows[0].chars.bytestr() == 'hello'
+	assert e.rows[1].chars.bytestr() == ''
+}
+
+fn test_kitty_backspace_deletes_char() {
+	mut row := Erow{
+		chars:  'hello'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              5
+		quit_times_left: quit_times
+	}
+	ev := tui.Event{
+		typ:  .key_down
+		code: .backspace
+		utf8: '\x1b[127u'
+	}
+	key := tui_key_to_editor_key(ev)
+	text := tui_key_text(ev)
+	assert key == int(`\x7f`)
+	assert text == ''
+	assert editor_process_key(mut e, key, text)
+	assert e.rows[0].chars.bytestr() == 'hell'
 }
 
 fn test_local_termui_grouped_bytes_replay_controls() {
