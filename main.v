@@ -2492,10 +2492,12 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 				}
 				else {}
 			}
+
 			return true
 		}
 		else {}
 	}
+
 	snap_before := editor_snapshot(e)
 	dirty_before := e.dirty
 	match c {
