@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           V="${HOME}/vlang/v"
           cd "${GITHUB_WORKSPACE}"
-          "${V}" fmt -verify main.v input.v syntax.v syntax_test.v
+          "${V}" fmt -verify main.v input.v syntax.v syntax_test.v syntax_embedded.v
 
       - name: Check, test, and build vro
         shell: bash

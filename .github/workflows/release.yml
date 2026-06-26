@@ -70,7 +70,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}"
-          "${V}" fmt -verify main.v input.v syntax.v syntax_test.v
+          "${V}" fmt -verify main.v input.v syntax.v syntax_test.v syntax_embedded.v
 
       - name: Format sources (windows)
         if: matrix.os == 'windows-latest'
@@ -78,7 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "${GITHUB_WORKSPACE}"
-          "${V}" fmt -w main.v input.v syntax.v syntax_test.v
+          "${V}" fmt -w main.v input.v syntax.v syntax_test.v syntax_embedded.v
 
       - name: Build vro
         shell: bash
