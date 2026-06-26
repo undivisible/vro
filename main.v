@@ -7,7 +7,7 @@ import strings
 import time
 import clipboard
 
-const vro_version = '1.1.1'
+const vro_version = '1.1.2'
 
 const tab_stop = 4
 const quit_times = 3
@@ -2439,8 +2439,64 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		editor_copy_selection(mut e)
 		return true
 	}
+	// Navigation-only keys never change text; skip snapshot entirely.
+	match c {
+		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right, key_shift_arrow_up,
+		key_shift_arrow_down, key_shift_arrow_left, key_shift_arrow_right, key_home, key_end,
+		key_page_up, key_page_down, ctrl_key(`l`), int(`\x1b`) {
+			editor_complete_reset(mut e)
+			e.follow_cursor = true
+			match c {
+				key_home {
+					editor_clear_selection(mut e)
+					e.cx = 0
+				}
+				key_end {
+					editor_clear_selection(mut e)
+					if e.cy < e.rows.len {
+						e.cx = e.rows[e.cy].chars.len
+					}
+				}
+				key_page_up, key_page_down {
+					editor_clear_selection(mut e)
+					if c == key_page_up {
+						e.cy = e.rowoff
+					} else {
+						e.cy = e.rowoff + e.screenrows - 1
+						if e.cy > e.rows.len {
+							e.cy = e.rows.len
+						}
+					}
+					for _ in 0 .. e.screenrows {
+						editor_move_cursor(mut e, if c == key_page_up {
+							key_arrow_up
+						} else {
+							key_arrow_down
+						})
+					}
+				}
+				key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
+					editor_clear_selection(mut e)
+					editor_move_cursor(mut e, c)
+				}
+				key_shift_arrow_up, key_shift_arrow_down, key_shift_arrow_left,
+				key_shift_arrow_right {
+					editor_begin_keyboard_selection(mut e)
+					editor_move_cursor(mut e, match c {
+						key_shift_arrow_up { key_arrow_up }
+						key_shift_arrow_down { key_arrow_down }
+						key_shift_arrow_left { key_arrow_left }
+						else { key_arrow_right }
+					})
+					editor_update_selection_cursor(mut e)
+				}
+				else {}
+			}
+			return true
+		}
+		else {}
+	}
 	snap_before := editor_snapshot(e)
-	text_before := snap_before.text
 	dirty_before := e.dirty
 	match c {
 		ctrl_key(`x`) {
@@ -2483,59 +2539,6 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 				editor_insert_tab_or_spaces(mut e)
 			}
 		}
-		key_home {
-			e.follow_cursor = true
-			editor_complete_reset(mut e)
-			editor_clear_selection(mut e)
-			e.cx = 0
-		}
-		key_end {
-			e.follow_cursor = true
-			editor_complete_reset(mut e)
-			editor_clear_selection(mut e)
-			if e.cy < e.rows.len {
-				e.cx = e.rows[e.cy].chars.len
-			}
-		}
-		ctrl_key(`l`), int(`\x1b`) {}
-		key_page_up, key_page_down {
-			e.follow_cursor = true
-			editor_complete_reset(mut e)
-			editor_clear_selection(mut e)
-			if c == key_page_up {
-				e.cy = e.rowoff
-			} else if c == key_page_down {
-				e.cy = e.rowoff + e.screenrows - 1
-				if e.cy > e.rows.len {
-					e.cy = e.rows.len
-				}
-			}
-			for _ in 0 .. e.screenrows {
-				editor_move_cursor(mut e, if c == key_page_up {
-					key_arrow_up
-				} else {
-					key_arrow_down
-				})
-			}
-		}
-		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right {
-			e.follow_cursor = true
-			editor_complete_reset(mut e)
-			editor_clear_selection(mut e)
-			editor_move_cursor(mut e, c)
-		}
-		key_shift_arrow_up, key_shift_arrow_down, key_shift_arrow_left, key_shift_arrow_right {
-			e.follow_cursor = true
-			editor_complete_reset(mut e)
-			editor_begin_keyboard_selection(mut e)
-			editor_move_cursor(mut e, match c {
-				key_shift_arrow_up { key_arrow_up }
-				key_shift_arrow_down { key_arrow_down }
-				key_shift_arrow_left { key_arrow_left }
-				else { key_arrow_right }
-			})
-			editor_update_selection_cursor(mut e)
-		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
 			e.follow_cursor = true
 			editor_complete_reset(mut e)
@@ -2577,7 +2580,7 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		}
 	}
 
-	if editor_rows_to_string(e) != text_before {
+	if e.dirty != dirty_before {
 		e.undo_stack << snap_before
 		if e.undo_stack.len > undo_stack_max {
 			e.undo_stack.delete(0)
