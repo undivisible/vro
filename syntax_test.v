@@ -25,7 +25,7 @@ fn strip_ansi(s string) string {
 }
 
 fn test_vro_version() {
-	assert vro_version == '1.1.3'
+	assert vro_version == '1.1.4'
 }
 
 fn test_syntax_name_for_ext() {
@@ -501,6 +501,67 @@ fn test_kitty_backspace_deletes_char() {
 	assert text == ''
 	assert editor_process_key(mut e, key, text)
 	assert e.rows[0].chars.bytestr() == 'hell'
+}
+
+fn test_kitty_csi_u_regular_char_text_extraction() {
+	// When a terminal sends a regular char as CSI u without the text field,
+	// tui_key_text must NOT return the raw escape sequence as insertable text.
+	ev := tui.Event{
+		typ:   .key_down
+		code:  .a
+		ascii: 97
+		utf8:  '\x1b[97;1u'
+	}
+	assert tui_key_text(ev) == 'a'
+}
+
+fn test_kitty_csi_u_regular_char_with_text_field() {
+	// With the text field (flag 16), ev.utf8 is the actual character.
+	ev := tui.Event{
+		typ:   .key_down
+		code:  .a
+		ascii: 97
+		utf8:  'a'
+	}
+	assert tui_key_text(ev) == 'a'
+}
+
+fn test_shift_tab_maps_to_shift_tab_key() {
+	ev := tui.Event{
+		typ:       .key_down
+		code:      .tab
+		modifiers: .shift
+	}
+	assert tui_key_to_editor_key(ev) == key_shift_tab
+}
+
+fn test_shift_tab_dedents_line() {
+	mut row := Erow{
+		chars:  '    hello'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		cx:              4
+		quit_times_left: quit_times
+	}
+	assert editor_process_key(mut e, key_shift_tab, '')
+	assert e.rows[0].chars.bytestr() == 'hello'
+}
+
+fn test_shift_tab_no_dedent_on_empty_line() {
+	mut e := EditorConfig{
+		quit_times_left: quit_times
+	}
+	editor_insert_row(mut e, 0, '')
+	assert editor_process_key(mut e, key_shift_tab, '')
+	assert e.rows[0].chars.bytestr() == ''
+}
+
+fn test_kitty_csi_u_f13_returns_zero() {
+	// F13 (57376u) is not handled by vro — should return 0, not crash.
+	assert tui_csi_sequence_to_editor_key('\x1b[57376u') == 0
 }
 
 fn test_local_termui_grouped_bytes_replay_controls() {

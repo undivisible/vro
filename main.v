@@ -7,7 +7,7 @@ import strings
 import time
 import clipboard
 
-const vro_version = '1.1.3'
+const vro_version = '1.1.4'
 
 const tab_stop = 4
 const quit_times = 3
@@ -30,6 +30,7 @@ const key_shift_arrow_left = 1012
 const key_shift_arrow_right = 1013
 const key_shift_arrow_up = 1014
 const key_shift_arrow_down = 1015
+const key_shift_tab = 1016
 const mouse_multi_click_ms = 500
 
 enum EditorPromptKind {
@@ -2358,6 +2359,32 @@ fn editor_insert_tab_or_spaces(mut e EditorConfig) {
 	}
 }
 
+// editor_dedent_line removes up to tab_stop leading spaces from the current line.
+fn editor_dedent_line(mut e EditorConfig) {
+	if e.cy >= e.rows.len {
+		return
+	}
+	mut row := e.rows[e.cy]
+	mut removed := 0
+	for removed < tab_stop && removed < row.chars.len && row.chars[removed] == ` ` {
+		removed++
+	}
+	if removed == 0 {
+		return
+	}
+	// Delete leading spaces directly from the row.
+	mut new_chars := []u8{cap: row.chars.len - removed}
+	new_chars << row.chars[removed..]
+	row.chars = new_chars
+	editor_update_row(mut row)
+	e.rows[e.cy] = row
+	if e.cx > e.rows[e.cy].chars.len {
+		e.cx = e.rows[e.cy].chars.len
+	}
+	e.dirty++
+	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
+}
+
 fn editor_handle_ctrl_q(mut e EditorConfig) bool {
 	if e.dirty == 0 {
 		return false
@@ -2540,6 +2567,11 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			if !editor_try_emmet_tab(mut e) {
 				editor_insert_tab_or_spaces(mut e)
 			}
+		}
+		key_shift_tab {
+			e.follow_cursor = true
+			editor_complete_reset(mut e)
+			editor_dedent_line(mut e)
 		}
 		key_del, ctrl_key(`h`), int(`\x7f`) {
 			e.follow_cursor = true
@@ -3089,6 +3121,9 @@ fn tui_key_to_editor_key(ev &tui.Event) int {
 			.down {
 				return key_shift_arrow_down
 			}
+			.tab {
+				return key_shift_tab
+			}
 			else {}
 		}
 	}
@@ -3159,8 +3194,11 @@ fn tui_key_text(ev &tui.Event) string {
 	if ev.modifiers.has(.ctrl) || ev.modifiers.has(.alt) {
 		return ''
 	}
-	if ev.utf8.len > 0 && ev.code != .enter && ev.code != .tab && ev.code != .backspace
-		&& ev.code != .delete && ev.code != .escape {
+	// Don't return raw escape sequences (kitty CSI u format) as insertable text.
+	// When a terminal uses the kitty keyboard protocol, ev.utf8 may contain the
+	// raw CSI u sequence instead of the actual character. Fall through to ev.ascii.
+	if ev.utf8.len > 0 && ev.utf8[0] != 0x1b && ev.code != .enter && ev.code != .tab
+		&& ev.code != .backspace && ev.code != .delete && ev.code != .escape {
 		return ev.utf8
 	}
 	if ev.ascii >= 32 && ev.ascii <= 126 {
@@ -3202,30 +3240,60 @@ fn tui_control_byte_to_editor_key(b u8) int {
 }
 
 fn tui_csi_sequence_to_editor_key(seq string) int {
-	return match seq {
-		'\x1b[27u', '\x1b[27;1u' { int(`\x1b`) }
+	// Try exact match first for common sequences.
+	match seq {
+		'\x1b[27u', '\x1b[27;1u' { return int(`\x1b`) }
 		// Kitty keyboard protocol CSI u sequences (fallback for terminals
 		// where V's tui doesn't parse them and they reach the raw byte handler)
-		'\x1b[9u', '\x1b[9;1u' { int(`\t`) }
-		'\x1b[13u', '\x1b[13;1u' { int(`\r`) }
-		'\x1b[127u', '\x1b[127;1u', '\x1b[8u', '\x1b[8;1u' { int(`\x7f`) }
-		'\x1b[A', '\x1bOA', '\x1b[1;A' { key_arrow_up }
-		'\x1b[B', '\x1bOB', '\x1b[1;B' { key_arrow_down }
-		'\x1b[C', '\x1bOC', '\x1b[1;C' { key_arrow_right }
-		'\x1b[D', '\x1bOD', '\x1b[1;D' { key_arrow_left }
-		'\x1b[H', '\x1bOH', '\x1b[1~', '\x1b[7~' { key_home }
-		'\x1b[F', '\x1bOF', '\x1b[4~', '\x1b[8~' { key_end }
-		'\x1b[3~' { key_del }
-		'\x1b[5~' { key_page_up }
-		'\x1b[6~' { key_page_down }
-		'\x1b[1;2A' { key_shift_arrow_up }
-		'\x1b[1;2B' { key_shift_arrow_down }
-		'\x1b[1;2C' { key_shift_arrow_right }
-		'\x1b[1;2D' { key_shift_arrow_left }
-		'\x1b[3;5~' { key_delete_word_forward }
-		'\x1b\x7f' { key_delete_word_backward }
-		else { 0 }
+		'\x1b[9u', '\x1b[9;1u' { return int(`\t`) }
+		'\x1b[13u', '\x1b[13;1u' { return int(`\r`) }
+		'\x1b[127u', '\x1b[127;1u', '\x1b[8u', '\x1b[8;1u' { return int(`\x7f`) }
+		'\x1b[A', '\x1bOA', '\x1b[1;A' { return key_arrow_up }
+		'\x1b[B', '\x1bOB', '\x1b[1;B' { return key_arrow_down }
+		'\x1b[C', '\x1bOC', '\x1b[1;C' { return key_arrow_right }
+		'\x1b[D', '\x1bOD', '\x1b[1;D' { return key_arrow_left }
+		'\x1b[H', '\x1bOH', '\x1b[1~', '\x1b[7~' { return key_home }
+		'\x1b[F', '\x1bOF', '\x1b[4~', '\x1b[8~' { return key_end }
+		'\x1b[3~' { return key_del }
+		'\x1b[5~' { return key_page_up }
+		'\x1b[6~' { return key_page_down }
+		'\x1b[1;2A' { return key_shift_arrow_up }
+		'\x1b[1;2B' { return key_shift_arrow_down }
+		'\x1b[1;2C' { return key_shift_arrow_right }
+		'\x1b[1;2D' { return key_shift_arrow_left }
+		'\x1b[3;5~' { return key_delete_word_forward }
+		'\x1b\x7f' { return key_delete_word_backward }
+		else {}
 	}
+
+	// Try parsing as a kitty CSI u sequence with functional key codepoints.
+	key := kitty_csi_u_to_editor_key(seq)
+	if key != 0 {
+		return key
+	}
+	return 0
+}
+
+// kitty_csi_u_to_editor_key parses CSI u sequences with kitty functional key
+// codepoints (57344+) that V's tui doesn't recognise. Most functional keys
+// (arrows, F1-F12, Home/End, PageUp/Down, Insert, Delete) use traditional CSI
+// sequences even under the kitty protocol — only F13-F35, lock keys, and
+// keypad keys use CSI u codepoints in the 57344+ range.
+// See https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+fn kitty_csi_u_to_editor_key(seq string) int {
+	if seq.len < 6 || seq[0] != 0x1b || seq[1] != `[` || seq[seq.len - 1] != `u` {
+		return 0
+	}
+	body := seq[2..seq.len - 1]
+	parts := body.split(';')
+	if parts.len < 1 {
+		return 0
+	}
+	codepoint := parts[0].split(':')[0].int()
+	// F13-F35 (57376-57398) and other functional keys in the PUA range.
+	// vro doesn't have key codes for these yet — return 0 to silently ignore.
+	_ = codepoint
+	return 0
 }
 
 fn tui_escape_sequence_end(text string, start int) int {
