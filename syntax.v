@@ -939,6 +939,15 @@ fn load_syntax_for_path(path string) ?CompiledSyntax {
 				break
 			}
 		}
+		// Fall back to syntax YAML embedded in the binary at compile time.
+		// This ensures highlighting works even when syntax/ is not on disk
+		// (e.g. wax/brew installs that didn't copy the syntax directory).
+		if yaml_src.len == 0 {
+			if src := embedded_syntax_yaml(ft) {
+				yaml_src = src
+				source_name = 'embedded:${ft}.yaml'
+			}
+		}
 	}
 	if yaml_src.len == 0 {
 		return none

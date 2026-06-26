@@ -220,6 +220,41 @@ fn test_bundled_toml_syntax_loads_despite_single_quoted_skip() {
 	assert syn.rules.len > 0
 }
 
+fn test_embedded_syntax_yaml_returns_rust() {
+	src := embedded_syntax_yaml('rust') or {
+		assert false
+		return
+	}
+	assert src.len > 0
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syn.rules.len > 0
+}
+
+fn test_embedded_syntax_yaml_returns_none_for_unknown() {
+	src := embedded_syntax_yaml('nonexistent_lang') or { return }
+	assert false
+}
+
+fn test_load_syntax_for_path_falls_back_to_embedded() {
+	// With VRO_SYNTAX_DIR pointing to a nonexistent dir and cwd outside
+	// the repo, the only source for syntax YAML should be the embedded
+	// copy compiled into the binary.
+	old_dir := os.getwd()
+	old_env := os.getenv('VRO_SYNTAX_DIR')
+	os.chdir(os.temp_dir()) or {}
+	os.setenv('VRO_SYNTAX_DIR', '/nonexistent/path', true)
+	defer {
+		os.chdir(old_dir) or {}
+		os.setenv('VRO_SYNTAX_DIR', old_env, true)
+	}
+	syn := load_syntax_for_path('test.rs') or {
+		assert false
+		return
+	}
+	assert syn.rules.len > 0
+	assert syn.source.starts_with('embedded:')
+}
+
 fn syntax_group_at(mut syn CompiledSyntax, line string, needle string) string {
 	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
 	at := line.index(needle) or { panic('missing needle ${needle}') }
