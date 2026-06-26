@@ -25,7 +25,7 @@ fn strip_ansi(s string) string {
 }
 
 fn test_vro_version() {
-	assert vro_version == '1.1.4'
+	assert vro_version == '1.1.5'
 }
 
 fn test_syntax_name_for_ext() {
