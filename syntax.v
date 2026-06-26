@@ -75,9 +75,32 @@ fn trim_line_end(line string) string {
 	return line.trim_right(' \t\r')
 }
 
-// Unquote a YAML double-quoted string (one line).
+// Unquote a YAML quoted string (one line) — handles both double-quoted and single-quoted.
+// Double-quoted: backslash escapes (\\x -> x). Single-quoted: no escapes, '' -> '.
 fn unquote_dquoted(s string) !string {
-	if s.len < 2 || s[0] != `"` {
+	if s.len < 2 {
+		return error('expected opening quote')
+	}
+	if s[0] == `'` {
+		// YAML single-quoted: only escape is '' for a literal single quote
+		mut out := strings.new_builder(s.len)
+		mut i := 1
+		for i < s.len {
+			c := s[i]
+			if c == `'` {
+				if i + 1 < s.len && s[i + 1] == `'` {
+					out.write_u8(`'`)
+					i += 2
+					continue
+				}
+				return out.str()
+			}
+			out.write_u8(c)
+			i++
+		}
+		return error('unclosed single quote')
+	}
+	if s[0] != `"` {
 		return error('expected opening quote')
 	}
 	mut out := strings.new_builder(s.len)

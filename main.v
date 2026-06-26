@@ -12,6 +12,7 @@ const vro_version = '1.1.1'
 const tab_stop = 4
 const quit_times = 3
 const tui_buffer_size = 262144
+const undo_stack_max = 200
 
 const key_arrow_left = 1000
 const key_arrow_right = 1001
@@ -2578,6 +2579,9 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 
 	if editor_rows_to_string(e) != text_before {
 		e.undo_stack << snap_before
+		if e.undo_stack.len > undo_stack_max {
+			e.undo_stack.delete(0)
+		}
 		e.redo_stack = []EditorSnapshot{}
 	}
 	if e.dirty != dirty_before || e.dirty == 0 {

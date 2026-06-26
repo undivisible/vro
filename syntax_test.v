@@ -197,6 +197,29 @@ fn test_local_syntax_reports_source() {
 	assert syn.source == os.join_path(dir, 'v.yaml')
 }
 
+fn test_unquote_single_quoted_yaml() {
+	assert unquote_dquoted("'hello'") or { panic(err.str()) } == 'hello'
+	assert unquote_dquoted("'\\\\.'") or { panic(err.str()) } == '\\\\.'
+	assert unquote_dquoted("'it''s'") or { panic(err.str()) } == "it's"
+	_ := unquote_dquoted("'unclosed") or { 'err' }
+}
+
+fn test_bundled_rust_syntax_loads_despite_single_quoted_skip() {
+	src := os.read_file('syntax/rust.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syn.rules.len > 0
+	mut ab := strings.new_builder(64)
+	hl_draw_line_slice(mut syn, 'fn main() {}', 0, 12, []bool{}, mut ab)
+	out := ab.str()
+	assert out.contains('fn')
+}
+
+fn test_bundled_toml_syntax_loads_despite_single_quoted_skip() {
+	src := os.read_file('syntax/toml.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syn.rules.len > 0
+}
+
 fn syntax_group_at(mut syn CompiledSyntax, line string, needle string) string {
 	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
 	at := line.index(needle) or { panic('missing needle ${needle}') }
