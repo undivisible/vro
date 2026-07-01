@@ -571,11 +571,11 @@ fn group_to_ansi(group string) string {
 	if g.starts_with('comment') {
 		return '\x1b[2m\x1b[32m'
 	}
-	if g == 'constant' {
-		return '\x1b[93m'
-	}
 	if g == 'error' {
 		return '\x1b[91m'
+	}
+	if g == 'constant' || g.starts_with('constant.bool') || g.starts_with('constant.builtin') {
+		return '\x1b[93m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
 		return '\x1b[33m'
@@ -583,7 +583,11 @@ fn group_to_ansi(group string) string {
 	if g.starts_with('constant.number') || g.contains('number') {
 		return '\x1b[36m'
 	}
-	if g.starts_with('keyword') || g == 'statement' || g == 'preproc' {
+	// catch any other constant.* sub-group
+	if g.starts_with('constant.') {
+		return '\x1b[93m'
+	}
+	if g.starts_with('statement') || g.starts_with('keyword') || g == 'preproc' {
 		return '\x1b[35m'
 	}
 	if g.contains('type') {
@@ -591,6 +595,9 @@ fn group_to_ansi(group string) string {
 	}
 	if g.contains('symbol') || g.contains('operator') {
 		return '\x1b[37m'
+	}
+	if g.starts_with('special') {
+		return '\x1b[32m'
 	}
 	return '\x1b[96m'
 }

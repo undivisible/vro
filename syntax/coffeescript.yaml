@@ -10,12 +10,8 @@ rules:
 
     - statement:  "\\b(await|when|catch|continue|debugger|default|by|until)\\b"
     - statement:  "\\b(delete|do|else|export|finally|for|class|extends|while|then)\\b"
-    - statement:  "\\b(get|if|import|from|in|instanceof|new|reject|resolve|return)\\b"
+    - statement:  "\\b(get|if|import|from|in|instanceof|new|return)\\b"
     - statement:  "\\b(set|super|switch|this|throw|try|typeof|with|yield|unless)\\b"
-
-    - constant.bool:  "\\b(true|false|yes|no|on|off)\\b"
-    - constant.bool.false: "\\b(false|no|off)\\b"
-    - constant.bool.true: "\\b(true|yes|on)\\b"
 
     - constant.number: "\\b[-+]?([1-9][0-9]*|0[0-7]*|0x[0-9a-fA-F]+)([uU][lL]?|[lL][uU]?)?\\b"
     - constant.number: "\\b[-+]?([0-9]+\\.[0-9]*|[0-9]*\\.[0-9]+)([EePp][+-]?[0-9]+)?[fFlL]?"
@@ -24,7 +20,6 @@ rules:
 
     - error: "\\b(enum|implements|interface|package|private|protected|public)"
     - constant: "\\b(globalThis|Infinity|null|undefined|NaN)\\b"
-    - constant: "\\b(null|undefined|NaN)\\b"
     - constant: "\\b(true|false|yes|no|on|off)\\b"
     - type: "\\b(Array|Boolean|Date|Enumerator|Error|Function|Generator|Map|Math)\\b"
     - type: "\\b(Number|Object|Promise|Proxy|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet)\\b"

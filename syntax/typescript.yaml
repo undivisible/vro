@@ -17,7 +17,7 @@ rules:
     - type: "\\b(Array|Boolean|Date|Enumerator|Error|Function|Math)\\b"
     - type: "\\b(Number|Object|RegExp|String|Symbol)\\b"
     - type: "\\b(any|unknown|boolean|never|number|string|symbol)\\b"
-    - statement: "[-+/*=<>!~%?:&|]"
+    - symbol.operator: "[-+/*=<>!~%?:&|]"
     - constant: "/[^*]([^/]|(\\\\/))*[^\\\\]/[gim]*"
     - constant: "\\\\[0-7][0-7]?[0-7]?|\\\\x[0-9a-fA-F]+|\\\\[bfnrt'\"\\?\\\\]"
     - comment:

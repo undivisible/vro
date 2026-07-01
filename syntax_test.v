@@ -135,7 +135,7 @@ rules:
 	mut ab := strings.new_builder(64)
 	hl_draw_line_slice(mut syn, '# Hello', 0, 7, []bool{}, mut ab)
 	out := ab.str()
-	assert out.contains('\x1b[96m')
+	assert out.contains('\x1b[32m')
 	assert out.contains('Hello')
 	assert out.contains('\x1b[0m')
 }
