@@ -2055,6 +2055,115 @@ fn test_backspace_at_line_start_merges_with_previous_via_local_bytes() {
 	assert e.cy == 0
 }
 
+fn syntax_group_at_ex(mut syn CompiledSyntax, line string, needle string) string {
+	owners, groups, _ := hl_fill_owners(mut syn, line, []bool{})
+	at := line.index(needle) or { return '' }
+	for i in at .. at + needle.len {
+		if i < owners.len && owners[i] >= 0 {
+			return groups[i]
+		}
+	}
+	return ''
+}
+
+fn test_javascript_syntax_groups() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+
+	// Keywords — all should be statement
+	assert syntax_group_at_ex(mut syn, 'const x = 1;', 'const') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'let x = 1;', 'let') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'var x = 1;', 'var') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'if (true) {}', 'if') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'return x;', 'return') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'function foo() {}', 'function') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'class Foo {}', 'class') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'import x from "y"', 'import') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'import x from "y"', 'from') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'async function f() {}', 'async') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'await p;', 'await') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'typeof x', 'typeof') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'x instanceof y', 'instanceof') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'throw e;', 'throw') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'try {}', 'try') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'catch(e) {}', 'catch') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'for (;;) {}', 'for') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'while (x) {}', 'while') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'do {} while (x)', 'do') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'switch (x) {}', 'switch') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'break;', 'break') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'continue;', 'continue') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'debugger;', 'debugger') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'export default x;', 'export') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'export default x;', 'default') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'new Foo()', 'new') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'delete x;', 'delete') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'void x;', 'void') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'yield x;', 'yield') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'with (x) {}', 'with') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'this.foo', 'this') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'static foo() {}', 'static') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'super()', 'super') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'set foo(v) {}', 'set') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'get foo() {}', 'get') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'x of y', 'of') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'x in y', 'in') == 'statement'
+
+	// Constants
+	assert syntax_group_at_ex(mut syn, 'null', 'null') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'true', 'true') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'false', 'false') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'undefined', 'undefined') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'NaN', 'NaN') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'Infinity', 'Infinity') == 'constant'
+	assert syntax_group_at_ex(mut syn, 'globalThis', 'globalThis') == 'constant'
+
+	// Error reserved words
+	assert syntax_group_at_ex(mut syn, 'enum', 'enum') == 'error'
+	assert syntax_group_at_ex(mut syn, 'implements', 'implements') == 'error'
+	assert syntax_group_at_ex(mut syn, 'interface', 'interface') == 'error'
+	assert syntax_group_at_ex(mut syn, 'package', 'package') == 'error'
+	assert syntax_group_at_ex(mut syn, 'private', 'private') == 'error'
+	assert syntax_group_at_ex(mut syn, 'protected', 'protected') == 'error'
+	assert syntax_group_at_ex(mut syn, 'public', 'public') == 'error'
+
+	// Numbers
+	assert syntax_group_at_ex(mut syn, '42', '42') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '0xFF', '0xFF') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '0b1010', '0b1010') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '0o777', '0o777') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '100n', '100n') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '3.14', '3.14') == 'constant.number'
+	assert syntax_group_at_ex(mut syn, '1e10', '1e10') == 'constant.number'
+
+	// Types
+	assert syntax_group_at_ex(mut syn, 'Array', 'Array') == 'type'
+	assert syntax_group_at_ex(mut syn, 'Promise', 'Promise') == 'type'
+	assert syntax_group_at_ex(mut syn, 'Map', 'Map') == 'type'
+	assert syntax_group_at_ex(mut syn, 'Set', 'Set') == 'type'
+
+	// Identifiers — NOT highlighted
+	assert syntax_group_at_ex(mut syn, 'foo', 'foo') == ''
+	assert syntax_group_at_ex(mut syn, 'console', 'console') == ''
+	assert syntax_group_at_ex(mut syn, 'bar', 'bar') == ''
+
+	// reject and resolve are NOT keywords
+	assert syntax_group_at_ex(mut syn, 'reject(x)', 'reject') == ''
+	assert syntax_group_at_ex(mut syn, 'resolve(x)', 'resolve') == ''
+
+	// Single-quoted string region
+	_, gs, _ := hl_fill_owners(mut syn, "'hello'", []bool{})
+	assert gs[0] == 'constant.string'
+
+	// Double-quoted string region
+	_, gd, _ := hl_fill_owners(mut syn, '"hello"', []bool{})
+	assert gd[0] == 'constant.string'
+
+	// Backtick string region
+	_, gt, _ := hl_fill_owners(mut syn, '`hello`', []bool{})
+	assert gt[0] == 'constant.string'
+}
+
 fn test_editor_mouse_scroll_no_content_change() {
 	mut rows := []Erow{}
 	for i in 0 .. 5 {

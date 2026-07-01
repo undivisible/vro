@@ -13,7 +13,7 @@ rules:
     - statement:  "\\b(get|if|import|from|in|instanceof|new|return)\\b"
     - statement:  "\\b(set|super|switch|this|throw|try|typeof|with|yield|unless)\\b"
 
-    - constant.number: "\\b[-+]?([1-9][0-9]*|0[0-7]*|0x[0-9a-fA-F]+)([uU][lL]?|[lL][uU]?)?\\b"
+    - constant.number: "\\b[-+]?([1-9][0-9]*|0x[0-9a-fA-F]+|0[0-7]*)([uU][lL]?|[lL][uU]?)?\\b"
     - constant.number: "\\b[-+]?([0-9]+\\.[0-9]*|[0-9]*\\.[0-9]+)([EePp][+-]?[0-9]+)?[fFlL]?"
     - constant.number: "\\b[-+]?([0-9]+[EePp][+-]?[0-9]+)[fFlL]?"
     - identifier: "@[A-Za-z0-9_]*"
