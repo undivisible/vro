@@ -2190,6 +2190,36 @@ fn test_editor_mouse_scroll_no_content_change() {
 	assert e.dirty == 0
 }
 
+fn test_js_render_diagnostic() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+
+	// Check that null IS matched as constant on its own
+	assert syntax_group_at_ex(mut syn, 'null', 'null') == 'constant'
+
+	// Check within return statement
+	assert syntax_group_at_ex(mut syn, 'return null', 'null') == 'constant'
+
+	// Check within full line with leading spaces
+	assert syntax_group_at_ex(mut syn, '    return null;', 'null') == 'constant'
+
+	// Check carry state: does hl_draw_line_slice produce correct output?
+	mut carry := []bool{len: syn.rules.len, init: false}
+
+	// First process leading lines to build carry state
+	carry = hl_carry_row(mut syn, 'const x = 42', carry)
+	carry = hl_carry_row(mut syn, "let y = 'hello';", carry)
+	carry = hl_carry_row(mut syn, '`test`', carry)
+	carry = hl_carry_row(mut syn, 'if (x > 0) {', carry)
+
+	// Now check null on the target line
+	line := '    return null;'
+	owners, groups, _ := hl_fill_owners(mut syn, line, carry)
+	at := line.index('null') or { panic('null not found') }
+	g := groups[at]
+	assert g == 'constant', 'null group should be constant, got [${g}]'
+}
+
 fn test_js_rendered_ansi_colors() {
 	// Test that the editor renders JS with correct ANSI colors
 	old_no_color := os.getenv('NO_COLOR')
