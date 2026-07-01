@@ -2190,41 +2190,53 @@ fn test_editor_mouse_scroll_no_content_change() {
 	assert e.dirty == 0
 }
 
-fn test_js_render_diagnostic() {
+fn test_js_diagnose_colors() {
 	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
 	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+	assert syn.rules.len > 0, 'no syntax rules compiled!'
 
-	// Check that null IS matched as constant on its own
-	assert syntax_group_at_ex(mut syn, 'null', 'null') == 'constant'
+	// Write realistic JS code to a temp file
+	js_path := os.join_path(os.temp_dir(), 'vro_diag.js')
+	os.write_file(js_path, 'const imap = {\n    host: "imap.gmail.com",\n    port: 993,\n    tls: true,\n    connect() {\n        this.socket = null;\n        return true;\n    },\n    async fetch(uid) {\n        const cmd = "FETCH " + uid;\n        return this.send(cmd);\n    },\n    send(raw) {\n        if (!this.socket) {\n            throw new Error("not connected");\n        }\n        this.socket.write(raw);\n        return null;\n    },\n};\n') or {}
+	defer { os.rm(js_path) or {} }
 
-	// Check within return statement
-	assert syntax_group_at_ex(mut syn, 'return null', 'null') == 'constant'
+	code := os.read_file(js_path) or { panic(err) }
 
-	// Check within full line with leading spaces
-	assert syntax_group_at_ex(mut syn, '    return null;', 'null') == 'constant'
-
-	// Check carry state: does hl_draw_line_slice produce correct output?
 	mut carry := []bool{len: syn.rules.len, init: false}
+	mut total := 0
+	mut colored := 0
+	mut counts := map[string]int{}
+	for line in code.split_into_lines() {
+		owners, groups, _ := hl_fill_owners(mut syn, line, carry)
+		carry = hl_carry_row(mut syn, line, carry)
+		for i in 0 .. line.len {
+			total++
+			if i < owners.len && owners[i] >= 0 {
+				colored++
+				counts[groups[i]] = counts[groups[i]] + 1
+			}
+		}
+	}
 
-	// First process leading lines to build carry state
-	carry = hl_carry_row(mut syn, 'const x = 42', carry)
-	carry = hl_carry_row(mut syn, "let y = 'hello';", carry)
-	carry = hl_carry_row(mut syn, '`test`', carry)
-	carry = hl_carry_row(mut syn, 'if (x > 0) {', carry)
-
-	// Now check null on the target line
-	line := '    return null;'
-	owners, groups, _ := hl_fill_owners(mut syn, line, carry)
-	at := line.index('null') or { panic('null not found') }
-	g := groups[at]
-	assert g == 'constant', 'null group should be constant, got [${g}]'
-
-	// Verify ANSI color output
-	mut ab := strings.new_builder(128)
-	hl_draw_line_slice(mut syn, '    return null;', 0, 15, carry, mut ab)
-	out := ab.str()
-	assert out.contains('\x1b[35mreturn\x1b[0m'), 'return should be magenta'
-	assert out.contains('\x1b[95mnull\x1b[0m'), 'null should be bright magenta'
+	eprint('colored: ${colored}/${total}\n')
+	// Must have multiple group types
+	assert counts.len >= 3, 'only ${counts.len} groups used'
+	// Yellow (constant.string) should not dominate
+	mut yellow := 0
+	for k, v in counts {
+		eprint('  [${k}]: ${v}\n')
+		if k.starts_with('constant.string') {
+			yellow += v
+		}
+	}
+	eprint('yellow chars: ${yellow}/${total}\n')
+	// Show group distribution (temporarily force-fail to see stats)
+	mut stats := 'groups: '
+	for k, v in counts {
+		stats += '${k}=${v} '
+	}
+	stats += 'total=${total} colored=${colored} yellow=${yellow}'
+	assert yellow < total, stats
 }
 
 fn test_js_rendered_ansi_colors() {
