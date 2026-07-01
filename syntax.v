@@ -568,24 +568,26 @@ fn parse_syntax_yaml(src string) ![]YamlRule {
 @[inline]
 fn group_to_ansi(group string) string {
 	g := group.to_lower()
+	// Nord-inspired ANSI color scheme.
+	// Terminal must have Nord palette configured for correct colors.
 	if g.starts_with('comment') {
-		return '\x1b[2m\x1b[32m'
+		return '\x1b[2m\x1b[90m'
 	}
 	if g == 'error' {
 		return '\x1b[91m'
 	}
 	if g == 'constant' || g.starts_with('constant.bool') || g.starts_with('constant.builtin') {
-		return '\x1b[95m'
+		return '\x1b[36m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
-		return '\x1b[37m'
+		return '\x1b[36m'
 	}
 	if g.starts_with('constant.number') || g.contains('number') {
-		return '\x1b[36m'
+		return '\x1b[33m'
 	}
 	// catch any other constant.* sub-group
 	if g.starts_with('constant.') {
-		return '\x1b[95m'
+		return '\x1b[36m'
 	}
 	if g.starts_with('statement') || g.starts_with('keyword') || g == 'preproc' {
 		return '\x1b[35m'
@@ -594,12 +596,12 @@ fn group_to_ansi(group string) string {
 		return '\x1b[34m'
 	}
 	if g.contains('symbol') || g.contains('operator') {
-		return '\x1b[33m'
+		return '\x1b[37m'
 	}
 	if g.starts_with('special') {
 		return '\x1b[32m'
 	}
-	return '\x1b[96m'
+	return '\x1b[37m'
 }
 
 // Find end pattern from search (same skip rules as micro-style regions).
