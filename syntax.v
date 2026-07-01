@@ -231,7 +231,7 @@ fn patch_v_regex(pat string) string {
 }
 
 fn compile_one_re(pat string) !regex.RE {
-	p2 := pat.replace('\\b', '')
+	mut p2 := pat.replace('\\b', '')
 	p3 := patch_v_regex(p2)
 	mut re, err, _ := regex.regex_base(p3)
 	if err != regex.compile_ok {
@@ -270,7 +270,7 @@ fn syntax_word_core_bounds(line string, start int, end int) (int, int, bool) {
 }
 
 fn compile_maybe_re(pat string) ?regex.RE {
-	p2 := pat.replace('\\b', '')
+	mut p2 := pat.replace('\\b', '')
 	p3 := patch_v_regex(p2)
 	mut re, err, _ := regex.regex_base(p3)
 	if err != regex.compile_ok {
@@ -313,7 +313,7 @@ fn find_first_regex_group(pat string) (int, int, bool) {
 			`)` {
 				if depth > 0 {
 					depth--
-					if depth == 0 {
+					if depth == 0 && close < 0 {
 						close = i
 					}
 				}

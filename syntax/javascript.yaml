@@ -5,10 +5,7 @@ detect:
     header: "^#!.*/(env +)?node( |$)"
 
 rules:
-    - constant.number: "\\b0[bB][01]+n?\\b"
-    - constant.number: "\\b0[oO][0-7]+n?\\b"
-    - constant.number: "\\b[0-9]+n\\b"
-    - constant.number: "\\b[-+]?([1-9][0-9]*|0x[0-9a-fA-F]+|0[0-7]*)([uU][lL]?|[lL][uU]?)?\\b"
+    - constant.number: "\\b[-+]?([1-9][0-9]*|0[0-7]*|0x[0-9a-fA-F]+)([uU][lL]?|[lL][uU]?)?\\b"
     - constant.number: "\\b[-+]?([0-9]+\\.[0-9]*|[0-9]*\\.[0-9]+)([EePp][+-]?[0-9]+)?[fFlL]?"
     - constant.number: "\\b[-+]?([0-9]+[EePp][+-]?[0-9]+)[fFlL]?"
     #- identifier: "[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[(]"
@@ -17,11 +14,12 @@ rules:
     - symbol.operator: "([-+/*=<>!~%?:&|]|[.]{3})"
     - statement: "\\b(async|await|break|case|catch|const|continue|debugger|default)\\b"
     - statement: "\\b(delete|do|else|export|finally|for|function\\*?|class|extends)\\b"
-    - statement: "\\b(get|if|import|from|in|of|instanceof|let|new|return)\\b"
+    - statement: "\\b(get|if|import|from|in|of|instanceof|let|new|reject|resolve|return)\\b"
     - statement: "\\b(set|static|super|switch|this|throw|try|typeof|var|void|while|with|yield)\\b"
     # reserved but unassigned
     - error: "\\b(enum|implements|interface|package|private|protected|public)\\b"
     - constant: "\\b(globalThis|Infinity|null|undefined|NaN)\\b"
+    - constant: "\\b(null|undefined|NaN)\\b"
     - constant: "\\b(true|false)\\b"
     - type: "\\b(Array|Boolean|Date|Enumerator|Error|Function|Generator|Map|Math)\\b"
     - type: "\\b(Number|Object|Promise|Proxy|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet)\\b"
@@ -56,6 +54,10 @@ rules:
         rules:
             - constant.specialChar: "\\\\."
             - identifier: "\\x24\\{.*?\\}"
+
+    - constant.bool: "\\b(true|false)\\b"
+    - constant.bool.false: "\\b(false)\\b"
+    - constant.bool.true: "\\b(true)\\b"
 
     - comment:
         start: "//"

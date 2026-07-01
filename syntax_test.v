@@ -2127,14 +2127,15 @@ fn test_javascript_syntax_groups() {
 	assert syntax_group_at_ex(mut syn, 'protected', 'protected') == 'error'
 	assert syntax_group_at_ex(mut syn, 'public', 'public') == 'error'
 
-	// Numbers
+	// Numbers — micro's original YAML doesn't have 0b/0o/BigInt
 	assert syntax_group_at_ex(mut syn, '42', '42') == 'constant.number'
 	assert syntax_group_at_ex(mut syn, '0xFF', '0xFF') == 'constant.number'
-	assert syntax_group_at_ex(mut syn, '0b1010', '0b1010') == 'constant.number'
-	assert syntax_group_at_ex(mut syn, '0o777', '0o777') == 'constant.number'
-	assert syntax_group_at_ex(mut syn, '100n', '100n') == 'constant.number'
 	assert syntax_group_at_ex(mut syn, '3.14', '3.14') == 'constant.number'
 	assert syntax_group_at_ex(mut syn, '1e10', '1e10') == 'constant.number'
+	// 0b/0o/BigInt not in original — should not match
+	assert syntax_group_at_ex(mut syn, '0b1010', '0b1010') == ''
+	assert syntax_group_at_ex(mut syn, '0o777', '0o777') == ''
+	assert syntax_group_at_ex(mut syn, '100n', '100n') == ''
 
 	// Types
 	assert syntax_group_at_ex(mut syn, 'Array', 'Array') == 'type'
@@ -2147,9 +2148,10 @@ fn test_javascript_syntax_groups() {
 	assert syntax_group_at_ex(mut syn, 'console', 'console') == ''
 	assert syntax_group_at_ex(mut syn, 'bar', 'bar') == ''
 
-	// reject and resolve are NOT keywords
-	assert syntax_group_at_ex(mut syn, 'reject(x)', 'reject') == ''
-	assert syntax_group_at_ex(mut syn, 'resolve(x)', 'resolve') == ''
+	// reject and resolve ARE in statement keywords in micro's original YAML
+	// (they're not JS keywords but micro included them)
+	assert syntax_group_at_ex(mut syn, 'reject(x)', 'reject') == 'statement'
+	assert syntax_group_at_ex(mut syn, 'resolve(x)', 'resolve') == 'statement'
 
 	// Single-quoted string region
 	_, gs, _ := hl_fill_owners(mut syn, "'hello'", []bool{})
