@@ -795,89 +795,153 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 			carry_out[ri] = false
 		}
 	}
-	// Second: carried regions (start from position 0)
+	// Find the region with carry_in — micro processes only the LAST carried region
+	mut active_reg := -1
 	for ri := syn.rules.len - 1; ri >= 0; ri-- {
 		if syn.rules[ri].kind != .reg {
 			continue
 		}
-		mut r := syn.rules[ri].reg
 		ci := ri < carry_in.len && carry_in[ri]
-		if !ci {
-			continue
-		}
-		end_abs := hl_region_find_end(mut r, line, 0)
-		if end_abs >= 0 {
-			for k := 0; k < end_abs && k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = r.group
-				}
-			}
-		} else {
-			mut colored_any := false
-			for k := 0; k < line.len; k++ {
-				if owners[k] == -1 {
-					owners[k] = ri
-					groups[k] = r.group
-					colored_any = true
-				}
-			}
-			carry_out[ri] = colored_any
-		}
-		syn.rules[ri].reg = r
-	}
-	// Third: micro-style earliest start wins for non-carried regions
-	mut pos := 0
-	for pos < line.len {
-		mut best_ri := -1
-		mut best_st := line.len
-		mut best_en := 0
-		for ri := 0; ri < syn.rules.len; ri++ {
-			if syn.rules[ri].kind != .reg {
-				continue
-			}
-			ci := ri < carry_in.len && carry_in[ri]
-			if ci {
-				continue
-			}
-			mut r := syn.rules[ri].reg
-			st, en := r.st.find_from(line, pos)
-			if st < 0 || st < pos {
-				continue
-			}
-			if r.start_line && st != 0 {
-				continue
-			}
-			// Skip if position is already owned by a region (not a pattern)
-			// Patterns can be overwritten by regions, but regions should not
-			// overlap. This prevents closing delimiters from being re-opened.
-			if st < line.len && owners[st] >= 0 && syn.rules[owners[st]].kind == .reg {
-				continue
-			}
-			if st < best_st {
-				best_st = st
-				best_en = en
-				best_ri = ri
-			}
-		}
-		if best_ri < 0 || best_st >= line.len {
+		if ci {
+			active_reg = ri
 			break
 		}
-		mut r := syn.rules[best_ri].reg
-		end_abs := hl_region_find_end(mut r, line, best_en)
-		if end_abs < 0 {
-			for k := best_st; k < line.len; k++ {
+	}
+	// If no carried region, use micro-style earliest-start for ALL regions
+	if active_reg < 0 {
+		mut pos := 0
+		for pos < line.len {
+			mut best_ri := -1
+			mut best_st := line.len
+			mut best_en := 0
+			for ri := 0; ri < syn.rules.len; ri++ {
+				if syn.rules[ri].kind != .reg {
+					continue
+				}
+				ci := ri < carry_in.len && carry_in[ri]
+				if ci {
+					continue
+				}
+				mut r := syn.rules[ri].reg
+				st, en := r.st.find_from(line, pos)
+				if st < 0 || st < pos {
+					continue
+				}
+				if r.start_line && st != 0 {
+					continue
+				}
+				// Skip if position already owned by a region
+				if st < line.len && owners[st] >= 0 && syn.rules[owners[st]].kind == .reg {
+					continue
+				}
+				if st < best_st {
+					best_st = st
+					best_en = en
+					best_ri = ri
+				}
+			}
+			if best_ri < 0 || best_st >= line.len {
+				break
+			}
+			mut r := syn.rules[best_ri].reg
+			end_abs := hl_region_find_end(mut r, line, best_en)
+			if end_abs < 0 {
+				for k := best_st; k < line.len; k++ {
+					owners[k] = best_ri
+					groups[k] = r.group
+				}
+				carry_out[best_ri] = true
+				break
+			}
+			for k := best_st; k < end_abs && k < line.len; k++ {
 				owners[k] = best_ri
 				groups[k] = r.group
 			}
-			carry_out[best_ri] = true
-			break
+			pos = end_abs
 		}
-		for k := best_st; k < end_abs && k < line.len; k++ {
-			owners[k] = best_ri
-			groups[k] = r.group
+		return owners, groups, carry_out
+	}
+	// Micro-style: process the active carried region
+	// Try to find its end — if found, close and continue on the rest
+	mut r := syn.rules[active_reg].reg
+	end_abs := hl_region_find_end(mut r, line, 0)
+	if end_abs >= 0 {
+		// Region closes on this line
+		for k := 0; k < end_abs && k < line.len; k++ {
+			if owners[k] == -1 {
+				owners[k] = active_reg
+				groups[k] = r.group
+			}
 		}
-		pos = end_abs
+		syn.rules[active_reg].reg = r
+		// Continue with non-carried regions after close
+		mut pos := end_abs
+		for pos < line.len {
+			mut best_ri := -1
+			mut best_st := line.len
+			mut best_en := 0
+			for ri := 0; ri < syn.rules.len; ri++ {
+				if syn.rules[ri].kind != .reg {
+					continue
+				}
+				ci := ri < carry_in.len && carry_in[ri]
+				if ci {
+					continue
+				}
+				mut r2 := syn.rules[ri].reg
+				st, en := r2.st.find_from(line, pos)
+				if st < 0 || st < pos {
+					continue
+				}
+				if r2.start_line && st != 0 {
+					continue
+				}
+				if st < line.len && owners[st] >= 0 && syn.rules[owners[st]].kind == .reg {
+					continue
+				}
+				if st < best_st {
+					best_st = st
+					best_en = en
+					best_ri = ri
+				}
+			}
+			if best_ri < 0 || best_st >= line.len {
+				break
+			}
+			mut r2 := syn.rules[best_ri].reg
+			end_abs2 := hl_region_find_end(mut r2, line, best_en)
+			if end_abs2 < 0 {
+				for k := best_st; k < line.len; k++ {
+					if owners[k] == -1 {
+						owners[k] = best_ri
+						groups[k] = r2.group
+					}
+				}
+				carry_out[best_ri] = true
+				break
+			}
+			for k := best_st; k < end_abs2 && k < line.len; k++ {
+				if owners[k] == -1 {
+					owners[k] = best_ri
+					groups[k] = r2.group
+				}
+			}
+			pos = end_abs2
+		}
+	} else {
+		// Region doesn't close — color all unowned positions and carry
+		mut colored := false
+		for k := 0; k < line.len; k++ {
+			if owners[k] == -1 {
+				owners[k] = active_reg
+				groups[k] = r.group
+				colored = true
+			}
+		}
+		if colored {
+			carry_out[active_reg] = true
+		}
+		syn.rules[active_reg].reg = r
 	}
 	return owners, groups, carry_out
 }
