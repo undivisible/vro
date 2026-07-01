@@ -627,20 +627,28 @@ fn hl_region_find_end(mut cr CompiledReg, line string, search int) int {
 
 // carry_in: region opened on a previous line without a closing end yet.
 // Returns carry_out: true if the region is still unclosed at end of this line.
-fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, mut cr CompiledReg, carry_in bool) bool {
+fn hl_apply_region(mut owners []int, mut groups []string, mut region_owned []bool, line string, ri int, mut cr CompiledReg, carry_in bool) bool {
 	mut pos := 0
 	if carry_in {
 		end_abs := hl_region_find_end(mut cr, line, 0)
 		if end_abs < 0 {
 			for k := 0; k < line.len; k++ {
+				if region_owned[k] {
+					continue
+				}
 				owners[k] = ri
 				groups[k] = cr.group
+				region_owned[k] = true
 			}
 			return true
 		}
 		for k := 0; k < end_abs && k < line.len; k++ {
+			if region_owned[k] {
+				continue
+			}
 			owners[k] = ri
 			groups[k] = cr.group
+			region_owned[k] = true
 		}
 		pos = end_abs
 	}
@@ -656,18 +664,32 @@ fn hl_apply_region(mut owners []int, mut groups []string, line string, ri int, m
 			pos++
 			continue
 		}
+		// Don't start a region at a position already owned by another region
+		// (e.g. double-quote inside single-quoted string)
+		if region_owned[st] {
+			pos = en
+			continue
+		}
 		search := en
 		end_abs := hl_region_find_end(mut cr, line, search)
 		if end_abs < 0 {
 			for k := st; k < line.len; k++ {
+				if region_owned[k] {
+					continue
+				}
 				owners[k] = ri
 				groups[k] = cr.group
+				region_owned[k] = true
 			}
 			return true
 		}
 		for k := st; k < end_abs && k < line.len; k++ {
+			if region_owned[k] {
+				continue
+			}
 			owners[k] = ri
 			groups[k] = cr.group
+			region_owned[k] = true
 		}
 		pos = end_abs
 	}
@@ -761,7 +783,11 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, []string, []bool) {
 	mut owners := []int{len: line.len, init: -1}
 	mut groups := []string{len: line.len, init: ''}
+	mut region_owned := []bool{len: line.len, init: false}
 	mut carry_out := []bool{len: syn.rules.len, init: false}
+	// First pass: patterns forward, regions BACKWARD so later YAML regions
+	// (e.g. single-quote) color before earlier ones (e.g. double-quote).
+	// This prevents a quote inside another string from opening a spurious region.
 	for ri in 0 .. syn.rules.len {
 		match syn.rules[ri].kind {
 			.pat {
@@ -771,14 +797,22 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 				carry_out[ri] = false
 			}
 			.reg {
-				mut r := syn.rules[ri].reg
-				ci := if ri < carry_in.len { carry_in[ri] } else { false }
-				co := hl_apply_region(mut owners, mut groups, line, ri, mut r, ci)
-				syn.rules[ri].reg = r
-				carry_out[ri] = co
+				// patterns already processed, regions handled below
 			}
 		}
 	}
+	for ri := syn.rules.len - 1; ri >= 0; ri-- {
+		if syn.rules[ri].kind != .reg {
+			continue
+		}
+		mut r := syn.rules[ri].reg
+		ci := if ri < carry_in.len { carry_in[ri] } else { false }
+		co := hl_apply_region(mut owners, mut groups, mut region_owned, line, ri, mut
+			r, ci)
+		syn.rules[ri].reg = r
+		carry_out[ri] = co
+	}
+	// Second pass: regions in reverse (same direction), skip end_line and carried
 	for ri := syn.rules.len - 1; ri >= 0; ri-- {
 		if syn.rules[ri].kind != .reg {
 			continue
@@ -791,7 +825,8 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 		if ci {
 			continue
 		}
-		_ = hl_apply_region(mut owners, mut groups, line, ri, mut r, false)
+		_ = hl_apply_region(mut owners, mut groups, mut region_owned, line, ri, mut r,
+			ci)
 		syn.rules[ri].reg = r
 	}
 	return owners, groups, carry_out
