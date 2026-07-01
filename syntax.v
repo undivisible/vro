@@ -783,57 +783,97 @@ fn hl_apply_pattern(mut owners []int, mut groups []string, line string, ri int, 
 fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, []string, []bool) {
 	mut owners := []int{len: line.len, init: -1}
 	mut groups := []string{len: line.len, init: ''}
-	mut region_owned := []bool{len: line.len, init: false}
 	mut carry_out := []bool{len: syn.rules.len, init: false}
-	// First pass: patterns forward, regions BACKWARD so later YAML regions
-	// (e.g. single-quote) color before earlier ones (e.g. double-quote).
-	// This prevents a quote inside another string from opening a spurious region.
+	// First: patterns on uncolored positions
 	for ri in 0 .. syn.rules.len {
-		match syn.rules[ri].kind {
-			.pat {
-				mut p := syn.rules[ri].pat
-				hl_apply_pattern(mut owners, mut groups, line, ri, mut p)
-				syn.rules[ri].pat = p
-				carry_out[ri] = false
-			}
-			.reg {
-				// patterns already processed, regions handled below
-			}
+		if syn.rules[ri].kind == .pat {
+			mut p := syn.rules[ri].pat
+			hl_apply_pattern(mut owners, mut groups, line, ri, mut p)
+			syn.rules[ri].pat = p
+			carry_out[ri] = false
 		}
 	}
+	// Second: carried regions (start from position 0)
 	for ri := syn.rules.len - 1; ri >= 0; ri-- {
 		if syn.rules[ri].kind != .reg {
 			continue
 		}
 		mut r := syn.rules[ri].reg
-		ci := if ri < carry_in.len { carry_in[ri] } else { false }
-		co := hl_apply_region(mut owners, mut groups, mut region_owned, line, ri, mut
-			r, ci)
+		ci := ri < carry_in.len && carry_in[ri]
+		if !ci {
+			continue
+		}
+		end_abs := hl_region_find_end(mut r, line, 0)
+		if end_abs >= 0 {
+			for k := 0; k < end_abs && k < line.len; k++ {
+				if owners[k] == -1 {
+					owners[k] = ri
+					groups[k] = r.group
+				}
+			}
+		} else {
+			mut colored_any := false
+			for k := 0; k < line.len; k++ {
+				if owners[k] == -1 {
+					owners[k] = ri
+					groups[k] = r.group
+					colored_any = true
+				}
+			}
+			carry_out[ri] = colored_any
+		}
 		syn.rules[ri].reg = r
-		carry_out[ri] = co
 	}
-	// Second pass: regions in reverse (same direction), skip end_line and carried
-	for ri := syn.rules.len - 1; ri >= 0; ri-- {
-		if syn.rules[ri].kind != .reg {
-			continue
+	// Third: micro-style earliest start wins for non-carried regions
+	mut pos := 0
+	for pos < line.len {
+		mut best_ri := -1
+		mut best_st := line.len
+		mut best_en := 0
+		for ri := 0; ri < syn.rules.len; ri++ {
+			if syn.rules[ri].kind != .reg {
+				continue
+			}
+			ci := ri < carry_in.len && carry_in[ri]
+			if ci {
+				continue
+			}
+			mut r := syn.rules[ri].reg
+			st, en := r.st.find_from(line, pos)
+			if st < 0 || st < pos {
+				continue
+			}
+			if r.start_line && st != 0 {
+				continue
+			}
+			if st < best_st {
+				best_st = st
+				best_en = en
+				best_ri = ri
+			}
 		}
-		mut r := syn.rules[ri].reg
-		if r.end_line {
-			continue
+		if best_ri < 0 || best_st >= line.len {
+			break
 		}
-		ci := if ri < carry_in.len { carry_in[ri] } else { false }
-		if ci {
-			continue
+		mut r := syn.rules[best_ri].reg
+		end_abs := hl_region_find_end(mut r, line, best_en)
+		if end_abs < 0 {
+			for k := best_st; k < line.len; k++ {
+				owners[k] = best_ri
+				groups[k] = r.group
+			}
+			carry_out[best_ri] = true
+			break
 		}
-		_ = hl_apply_region(mut owners, mut groups, mut region_owned, line, ri, mut r,
-			ci)
-		syn.rules[ri].reg = r
+		for k := best_st; k < end_abs && k < line.len; k++ {
+			owners[k] = best_ri
+			groups[k] = r.group
+		}
+		pos = end_abs
 	}
 	return owners, groups, carry_out
 }
 
-// Emit logical slice [coloff .. coloff+width) with ANSI (escapes are zero-width in terminal).
-// carry_in: per-rule region continuation from previous physical line (see editor hl_carry_enter).
 fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int, carry_in []bool, mut ab strings.Builder) {
 	if syn.rules.len == 0 || line.len == 0 || width <= 0 {
 		if line.len > coloff {
