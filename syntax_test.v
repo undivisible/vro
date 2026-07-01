@@ -2218,6 +2218,13 @@ fn test_js_render_diagnostic() {
 	at := line.index('null') or { panic('null not found') }
 	g := groups[at]
 	assert g == 'constant', 'null group should be constant, got [${g}]'
+
+	// Verify ANSI color output
+	mut ab := strings.new_builder(128)
+	hl_draw_line_slice(mut syn, '    return null;', 0, 15, carry, mut ab)
+	out := ab.str()
+	assert out.contains('\x1b[35mreturn\x1b[0m'), 'return should be magenta'
+	assert out.contains('\x1b[95mnull\x1b[0m'), 'null should be bright magenta'
 }
 
 fn test_js_rendered_ansi_colors() {
