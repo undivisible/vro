@@ -100,7 +100,7 @@ fn test_bundled_v_syntax_highlights_keywords() {
 	hl_draw_line_slice(mut syn, 'fn main() {', 0, 11, []bool{}, mut ab)
 	out := ab.str()
 	assert out.contains('\x1b[35mfn\x1b[0m')
-	assert out.contains('\x1b[37m(')
+	assert out.contains('\x1b[33m(')
 }
 
 fn test_bundled_v_line_comments_do_not_carry() {
@@ -2276,8 +2276,8 @@ fn test_js_rendered_ansi_colors() {
 	// Numbers = cyan (36m)
 	assert out.contains('\x1b[36m42\x1b[0m')
 
-	// Strings = yellow (33m)
-	assert out.contains('\x1b[33m"hello"\x1b[0m')
+	// Strings = white (37m)
+	assert out.contains('\x1b[37m"hello"\x1b[0m')
 
 	// Constants = bright magenta (95m)
 	assert out.contains('\x1b[95mtrue\x1b[0m')
@@ -2296,7 +2296,7 @@ fn test_js_rendered_ansi_colors() {
 	e2.screenrows = 3
 	editor_load_buffer_content(mut e2, "const s = 'hi';\n")
 	out2 := editor_build_screen(mut e2)
-	assert out2.contains("\x1b[33m'hi'\x1b[0m")
+	assert out2.contains("\x1b[37m'hi'\x1b[0m")
 
 	// Test template literal
 	mut e3 := editor_new()
@@ -2305,15 +2305,15 @@ fn test_js_rendered_ansi_colors() {
 	e3.screenrows = 3
 	editor_load_buffer_content(mut e3, 'const t = `hi`;\n')
 	out3 := editor_build_screen(mut e3)
-	assert out3.contains('\x1b[33m`hi`\x1b[0m')
+	assert out3.contains('\x1b[37m`hi`\x1b[0m')
 
 	// Verify group_to_ansi mapping for key groups
 	assert group_to_ansi('comment') == '\x1b[2m\x1b[32m'
-	assert group_to_ansi('constant.string') == '\x1b[33m'
+	assert group_to_ansi('constant.string') == '\x1b[37m'
 	assert group_to_ansi('constant.number') == '\x1b[36m'
 	assert group_to_ansi('statement') == '\x1b[35m'
 	assert group_to_ansi('type') == '\x1b[34m'
-	assert group_to_ansi('symbol.brackets') == '\x1b[37m'
+	assert group_to_ansi('symbol.brackets') == '\x1b[33m'
 	assert group_to_ansi('constant') == '\x1b[95m'
 	assert group_to_ansi('error') == '\x1b[91m'
 	assert group_to_ansi('special') == '\x1b[32m'

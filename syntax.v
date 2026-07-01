@@ -578,7 +578,7 @@ fn group_to_ansi(group string) string {
 		return '\x1b[95m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
-		return '\x1b[33m'
+		return '\x1b[37m'
 	}
 	if g.starts_with('constant.number') || g.contains('number') {
 		return '\x1b[36m'
@@ -594,7 +594,7 @@ fn group_to_ansi(group string) string {
 		return '\x1b[34m'
 	}
 	if g.contains('symbol') || g.contains('operator') {
-		return '\x1b[37m'
+		return '\x1b[33m'
 	}
 	if g.starts_with('special') {
 		return '\x1b[32m'
@@ -844,6 +844,12 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 				continue
 			}
 			if r.start_line && st != 0 {
+				continue
+			}
+			// Skip if position is already owned by a region (not a pattern)
+			// Patterns can be overwritten by regions, but regions should not
+			// overlap. This prevents closing delimiters from being re-opened.
+			if st < line.len && owners[st] >= 0 && syn.rules[owners[st]].kind == .reg {
 				continue
 			}
 			if st < best_st {
