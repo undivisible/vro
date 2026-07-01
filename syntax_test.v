@@ -2187,3 +2187,87 @@ fn test_editor_mouse_scroll_no_content_change() {
 	editor_scroll_mouse(mut e, .right)
 	assert e.dirty == 0
 }
+
+fn test_js_rendered_ansi_colors() {
+	// Test that the editor renders JS with correct ANSI colors
+	old_no_color := os.getenv('NO_COLOR')
+	old_force := os.getenv('VRO_FORCE_COLOR')
+	os.setenv('NO_COLOR', '1', true)
+	os.setenv('VRO_FORCE_COLOR', '1', true)
+	defer {
+		if old_no_color.len > 0 {
+			os.setenv('NO_COLOR', old_no_color, true)
+		} else {
+			os.unsetenv('NO_COLOR')
+		}
+		if old_force.len > 0 {
+			os.setenv('VRO_FORCE_COLOR', old_force, true)
+		} else {
+			os.unsetenv('VRO_FORCE_COLOR')
+		}
+	}
+
+	mut e := editor_new()
+	e.filename = 'test.js'
+	e.screencols = 80
+	e.screenrows = 10
+
+	code := 'const x = 42;\nlet y = "hello";\nif (true) {\n    return null;\n}\n'
+	editor_load_buffer_content(mut e, code)
+	out := editor_build_screen(mut e)
+
+	// Keywords = magenta (35m)
+	assert out.contains('\x1b[35mconst\x1b[0m')
+	assert out.contains('\x1b[35mlet\x1b[0m')
+	assert out.contains('\x1b[35mif\x1b[0m')
+	assert out.contains('\x1b[35mreturn\x1b[0m')
+
+	// Numbers = cyan (36m)
+	assert out.contains('\x1b[36m42\x1b[0m')
+
+	// Strings = yellow (33m)
+	assert out.contains('\x1b[33m"hello"\x1b[0m')
+
+	// Constants = bright magenta (95m)
+	assert out.contains('\x1b[95mtrue\x1b[0m')
+	assert out.contains('\x1b[95mnull\x1b[0m')
+
+	// Unhighlighted identifiers (x, y) should be plain text without color codes
+	// Verify no yellow/cyan/etc wrapping around x
+	assert !out.contains('\x1b[33mx\x1b[0m')
+	assert !out.contains('\x1b[35mx\x1b[0m')
+	assert !out.contains('\x1b[95mx\x1b[0m')
+
+	// Now test single-quoted strings
+	mut e2 := editor_new()
+	e2.filename = 'test.js'
+	e2.screencols = 80
+	e2.screenrows = 3
+	editor_load_buffer_content(mut e2, "const s = 'hi';\n")
+	out2 := editor_build_screen(mut e2)
+	assert out2.contains("\x1b[33m'hi'\x1b[0m")
+
+	// Test template literal
+	mut e3 := editor_new()
+	e3.filename = 'test.js'
+	e3.screencols = 80
+	e3.screenrows = 3
+	editor_load_buffer_content(mut e3, 'const t = `hi`;\n')
+	out3 := editor_build_screen(mut e3)
+	assert out3.contains('\x1b[33m`hi`\x1b[0m')
+
+	// Verify group_to_ansi mapping for key groups
+	assert group_to_ansi('comment') == '\x1b[2m\x1b[32m'
+	assert group_to_ansi('constant.string') == '\x1b[33m'
+	assert group_to_ansi('constant.number') == '\x1b[36m'
+	assert group_to_ansi('statement') == '\x1b[35m'
+	assert group_to_ansi('type') == '\x1b[34m'
+	assert group_to_ansi('symbol.brackets') == '\x1b[37m'
+	assert group_to_ansi('constant') == '\x1b[95m'
+	assert group_to_ansi('error') == '\x1b[91m'
+	assert group_to_ansi('special') == '\x1b[32m'
+	assert group_to_ansi('constant.bool') == '\x1b[95m'
+	assert group_to_ansi('identifier.function') == '\x1b[96m'
+	assert group_to_ansi('constant.specialchar') == '\x1b[95m'
+	assert group_to_ansi('statement.built_in') == '\x1b[35m'
+}

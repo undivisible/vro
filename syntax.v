@@ -575,7 +575,7 @@ fn group_to_ansi(group string) string {
 		return '\x1b[91m'
 	}
 	if g == 'constant' || g.starts_with('constant.bool') || g.starts_with('constant.builtin') {
-		return '\x1b[93m'
+		return '\x1b[95m'
 	}
 	if g.starts_with('constant.string') || g.contains('string') {
 		return '\x1b[33m'
@@ -585,7 +585,7 @@ fn group_to_ansi(group string) string {
 	}
 	// catch any other constant.* sub-group
 	if g.starts_with('constant.') {
-		return '\x1b[93m'
+		return '\x1b[95m'
 	}
 	if g.starts_with('statement') || g.starts_with('keyword') || g == 'preproc' {
 		return '\x1b[35m'
