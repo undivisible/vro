@@ -571,6 +571,12 @@ fn group_to_ansi(group string) string {
 	if g.starts_with('comment') {
 		return '\x1b[2m\x1b[32m'
 	}
+	if g == 'constant' {
+		return '\x1b[93m'
+	}
+	if g == 'error' {
+		return '\x1b[91m'
+	}
 	if g.starts_with('constant.string') || g.contains('string') {
 		return '\x1b[33m'
 	}
