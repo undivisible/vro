@@ -2335,3 +2335,34 @@ fn test_js_rendered_ansi_colors() {
 	assert group_to_ansi('constant.specialchar') == '\x1b[36m'
 	assert group_to_ansi('statement.built_in') == '\x1b[35m'
 }
+
+fn test_js_specific_bugs() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+
+	// 1. Comments should be 'comment' group
+	owners, groups, _ := hl_fill_owners(mut syn, '// this is a comment', []bool{})
+	assert groups[0] == 'comment', 'comment:' + groups[0]
+
+	// 2. inline comment after code
+	o2, g2, _ := hl_fill_owners(mut syn, 'const x = 1; // end comment', []bool{})
+	assert g2[14] == 'comment', 'inline comment:' + g2[14]
+
+	// 3. Template literal closing backtick
+	o3, g3, _ := hl_fill_owners(mut syn, '`hello`', []bool{})
+	assert g3[0] == 'constant.string', 'backtick:' + g3[0]
+	assert g3[6] == 'constant.string', 'close bt:' + g3[6]
+
+	// 4. group_to_ansi verify identifier is white
+	assert group_to_ansi('identifier') == '\x1b[37m'
+	assert group_to_ansi('identifier.function') == '\x1b[37m'
+	assert group_to_ansi('type') == '\x1b[34m'
+
+	// 5. Single-line import keywords
+	o5, g5, _ := hl_fill_owners(mut syn, 'import x from "y"', []bool{})
+	assert g5[0] == 'statement', 'import:' + g5[0]
+	assert g5[9] == 'statement', 'from:' + g5[8]
+
+	// 6. Template with interpolation (v1: ${...} NOT distinguished)
+	// Entire template should be constant.string
+}
