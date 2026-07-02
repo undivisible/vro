@@ -2240,6 +2240,18 @@ fn test_js_diagnose_colors() {
 	assert yellow < total, stats
 }
 
+fn test_js_single_line_closing() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+	// Single line: 'hello'
+	ones, gs, _ := hl_fill_owners(mut syn, "'hello'", []bool{})
+	// Closing ' at position 6 should be constant.string
+	assert gs[6] == 'constant.string', 'closing: ' + gs[6]
+	// All positions 0-5 should be constant.string
+	assert gs[0] == 'constant.string', 'opening: ' + gs[0]
+	assert gs[3] == 'constant.string', 'middle: ' + gs[3]
+}
+
 fn test_js_rendered_ansi_colors() {
 	// Test that the editor renders JS with correct ANSI colors
 	old_no_color := os.getenv('NO_COLOR')
