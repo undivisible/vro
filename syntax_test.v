@@ -2197,7 +2197,8 @@ fn test_js_diagnose_colors() {
 
 	// Write realistic JS code to a temp file
 	js_path := os.join_path(os.temp_dir(), 'vro_diag.js')
-	os.write_file(js_path, 'const imap = {\n    host: "imap.gmail.com",\n    port: 993,\n    tls: true,\n    connect() {\n        this.socket = null;\n        return true;\n    },\n    async fetch(uid) {\n        const cmd = "FETCH " + uid;\n        return this.send(cmd);\n    },\n    send(raw) {\n        if (!this.socket) {\n            throw new Error("not connected");\n        }\n        this.socket.write(raw);\n        return null;\n    },\n};\n') or {}
+	os.write_file(js_path,
+		'const imap = {\n    host: "imap.gmail.com",\n    port: 993,\n    tls: true,\n    connect() {\n        this.socket = null;\n        return true;\n    },\n    async fetch(uid) {\n        const cmd = "FETCH " + uid;\n        return this.send(cmd);\n    },\n    send(raw) {\n        if (!this.socket) {\n            throw new Error("not connected");\n        }\n        this.socket.write(raw);\n        return null;\n    },\n};\n') or {}
 	defer { os.rm(js_path) or {} }
 
 	code := os.read_file(js_path) or { panic(err) }
