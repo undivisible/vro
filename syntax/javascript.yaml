@@ -10,8 +10,14 @@ rules:
     - constant.number: "\\b[-+]?([0-9]+[EePp][+-]?[0-9]+)[fFlL]?"
     #- identifier: "[A-Za-z_][A-Za-z0-9_]*[[:space:]]*[(]"
     # ^ this is not correct usage of the identifier color
+    # regex literals — must come before symbol.operator since / is also an operator
+    - constant: "/([^/\\\\]|\\\\\\.)+/[gimsuyd]*"
     - symbol.brackets: "[(){}]|\\[|\\]"
     - symbol.operator: "([-+/*=<>!~%?:&|]|[.]{3})"
+    - symbol.operator: "\\?\\."
+    - symbol.operator: "\\?\\?"
+    # private class fields
+    - identifier: "#[a-zA-Z_$][a-zA-Z0-9_$]*\\b"
     - statement: "\\b(async|await|break|case|catch|const|continue|debugger|default)\\b"
     - statement: "\\b(delete|do|else|export|finally|for|function\\*?|class|extends)\\b"
     - statement: "\\b(get|if|import|from|in|of|instanceof|let|new|reject|resolve|return)\\b"
@@ -25,7 +31,6 @@ rules:
     - type: "\\b(Number|Object|Promise|Proxy|Reflect|RegExp|Set|String|Symbol|WeakMap|WeakSet)\\b"
     - type: "\\b(BigInt64Array|BigUint64Array|Float32Array|Float64Array|Int16Array)\\b"
 
-    # - constant: "/[^*]([^/]|(\\\\/))*[^\\\\]/[gim]*"
     - constant: "\\\\[0-7][0-7]?[0-7]?|\\\\x[0-9a-fA-F]+|\\\\[bfnrt'\"\\?\\\\]"
     - comment: "^#!.*/(env +)?node( |$)"
 

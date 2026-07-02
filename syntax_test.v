@@ -2366,3 +2366,33 @@ fn test_js_specific_bugs() {
 	// 6. Template with interpolation (v1: ${...} NOT distinguished)
 	// Entire template should be constant.string
 }
+
+fn test_js_new_patterns() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+
+	// Regex literal /pattern/flags
+	// Should match as 'constant' (teal = 36m)
+	mut carry := []bool{len: syn.rules.len, init: false}
+	ones, gs, _ := hl_fill_owners(mut syn, '/test/gi', carry)
+	// Opening / should be constant (regex literal)
+	assert ones[0] >= 0, 'regex / not matched'
+	assert gs[0] == 'constant', 'regex:' + gs[0]
+	// Closing / should also be constant
+	assert gs[5] == 'constant', 'regex close:' + gs[5]
+
+	// Private field #name
+	o2, g2, _ := hl_fill_owners(mut syn, '#socket', []bool{})
+	// The identifier part (socket) should be matched
+	for i in 1 .. 7 {
+		assert g2[1] == 'identifier', 'pf:' + g2[i]
+	}
+
+	// Operator patterns: ??, ?.
+	o3, g3, _ := hl_fill_owners(mut syn, 'x ?? y', []bool{})
+	assert g3[2] == 'symbol.operator', '??:' + g3[2]
+	assert g3[3] == 'symbol.operator', '??:' + g3[3]
+
+	o4, g4, _ := hl_fill_owners(mut syn, 'x?.y', []bool{})
+	assert g4[1] == 'symbol.operator', '?.:' + g4[1]
+}
