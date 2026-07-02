@@ -818,10 +818,6 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 				if syn.rules[ri].kind != .reg {
 					continue
 				}
-				ci := ri < carry_in.len && carry_in[ri]
-				if ci {
-					continue
-				}
 				mut r := syn.rules[ri].reg
 				st, en := r.st.find_from(line, pos)
 				if st < 0 || st < pos {
@@ -882,10 +878,6 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 			mut best_en := 0
 			for ri := 0; ri < syn.rules.len; ri++ {
 				if syn.rules[ri].kind != .reg {
-					continue
-				}
-				ci := ri < carry_in.len && carry_in[ri]
-				if ci {
 					continue
 				}
 				mut r2 := syn.rules[ri].reg
