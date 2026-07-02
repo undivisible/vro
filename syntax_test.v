@@ -2363,8 +2363,39 @@ fn test_js_specific_bugs() {
 	assert g5[0] == 'statement', 'import:' + g5[0]
 	assert g5[9] == 'statement', 'from:' + g5[8]
 
-	// 6. Template with interpolation (v1: ${...} NOT distinguished)
-	// Entire template should be constant.string
+	// 6. Template with interpolation (${...} now distinguished)
+	o6, g6, _ := hl_fill_owners(mut syn, '`hello ' + '$' + '{name} world`', []bool{})
+	// Backticks are constant.string
+	assert g6[0] == 'constant.string', 'bt:' + g6[0]
+	assert g6[20] == 'constant.string', 'bt close:' + g6[20]
+	// \${name} range (pos 7-13) should be identifier
+	assert g6[7] == 'identifier', '\$:' + g6[7]
+	assert g6[8] == 'identifier', '{:' + g6[8]
+	assert g6[9] == 'identifier', 'n:' + g6[9]
+	assert g6[13] == 'identifier', '}:' + g6[13]
+	// spaces before/after interpolation stay constant.string
+	assert g6[6] == 'constant.string', 'space:' + g6[6]
+	assert g6[14] == 'constant.string', 'space2:' + g6[14]
+}
+
+fn test_js_string_escape_seq() {
+	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
+	mut syn := compile_syntax_from_yaml(src) or { panic(err) }
+
+	// Escape sequence inside double-quoted string
+	o1, g1, _ := hl_fill_owners(mut syn, '"hello\\nworld"', []bool{})
+	// Opening quote = constant.string
+	assert g1[0] == 'constant.string', 'dq:' + g1[0]
+	// \\n = constant.specialChar
+	assert g1[6] == 'constant.specialChar', 'bs:' + g1[6]
+	assert g1[7] == 'constant.specialChar', 'n:' + g1[7]
+
+	// Escape sequence inside backtick string
+	o2, g2, _ := hl_fill_owners(mut syn, '`status: \\n`', []bool{})
+	assert g2[0] == 'constant.string', 'bt:' + g2[0]
+	// \\n = constant.specialChar
+	assert g2[9] == 'constant.specialChar', 'bs:' + g2[9]
+	assert g2[10] == 'constant.specialChar', 'n:' + g2[10]
 }
 
 fn test_js_new_patterns() {

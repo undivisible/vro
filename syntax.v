@@ -855,6 +855,7 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 			}
 			pos = end_abs
 		}
+		apply_string_sub_patterns(mut owners, mut groups, line)
 		return owners, groups, carry_out
 	}
 	// Micro-style: process the active carried region
@@ -935,7 +936,52 @@ fn hl_fill_owners(mut syn CompiledSyntax, line string, carry_in []bool) ([]int, 
 		}
 		syn.rules[active_reg].reg = r
 	}
+	apply_string_sub_patterns(mut owners, mut groups, line)
 	return owners, groups, carry_out
+}
+
+fn apply_string_sub_patterns(mut owners []int, mut groups []string, line string) {
+	if line.len == 0 {
+		return
+	}
+	mut i := 0
+	for i < line.len {
+		if groups[i] != 'constant.string' {
+			i++
+			continue
+		}
+		if line[i] == `\\` && i + 1 < line.len {
+			groups[i] = 'constant.specialChar'
+			groups[i + 1] = 'constant.specialChar'
+			i += 2
+			continue
+		}
+		if line[i] == `$` && i + 1 < line.len && line[i + 1] == `{` {
+			mut depth := 1
+			mut j := i + 2
+			for j < line.len && groups[j] == 'constant.string' {
+				if line[j] == `{` {
+					depth++
+				}
+				if line[j] == `}` {
+					depth--
+					if depth == 0 {
+						break
+					}
+				}
+				j++
+			}
+			if depth == 0 {
+				end := j + 1
+				for k in i .. end {
+					groups[k] = 'identifier'
+				}
+				i = end
+				continue
+			}
+		}
+		i++
+	}
 }
 
 fn hl_draw_line_slice(mut syn CompiledSyntax, line string, coloff int, width int, carry_in []bool, mut ab strings.Builder) {
