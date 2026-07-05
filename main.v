@@ -5,7 +5,10 @@ import os
 import term.ui as tui
 import strings
 import time
-import clipboard
+
+$if !headless ? {
+	import clipboard
+}
 
 const vro_version = '1.2.3'
 
@@ -2403,28 +2406,36 @@ fn editor_write_system_clipboard(text string) bool {
 	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
 		return false
 	}
-	mut cb := clipboard.new()
-	defer {
-		cb.destroy()
-	}
-	if !cb.is_available() {
+	$if headless ? {
 		return false
+	} $else {
+		mut cb := clipboard.new()
+		defer {
+			cb.destroy()
+		}
+		if !cb.is_available() {
+			return false
+		}
+		return cb.copy(text)
 	}
-	return cb.copy(text)
 }
 
 fn editor_read_system_clipboard() string {
 	if os.getenv('VRO_NO_SYSTEM_CLIPBOARD') == '1' {
 		return ''
 	}
-	mut cb := clipboard.new()
-	defer {
-		cb.destroy()
-	}
-	if !cb.is_available() {
+	$if headless ? {
 		return ''
+	} $else {
+		mut cb := clipboard.new()
+		defer {
+			cb.destroy()
+		}
+		if !cb.is_available() {
+			return ''
+		}
+		return cb.paste()
 	}
-	return cb.paste()
 }
 
 fn editor_insert_text(mut e EditorConfig, text string) {
