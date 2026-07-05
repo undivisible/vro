@@ -1,0 +1,31 @@
+filetype: crepus
+
+detect:
+    filename: "\\.crepus$"
+
+rules:
+    - comment:
+        start: "^ *#"
+        end: "$"
+        rules:
+            - todo: "(TODO|FIXME|NOTE):?"
+    - preproc: "^ *\\+\\+\\+ *$"
+    - statement: "^ *--- +.*$"
+    - statement: "^ *\\$:.*$"
+    - statement: "\\b(if|else|for|match|then|include|embed|slot-rotate)\\b"
+    - symbol.operator:
+        start: "\\{"
+        end: "\\}"
+    - constant.string:
+        start: "(^| )\""
+        end: "\""
+        skip: "\\\\."
+        rules:
+            - constant.specialChar: "\\\\."
+    - symbol.tag: "^ *[A-Za-z][-A-Za-z0-9_]*"
+    - identifier: "[@A-Za-z][-A-Za-z0-9_.:]*="
+    - identifier.class: "#[-A-Za-z0-9_]+"
+    - identifier.class: " [-A-Za-z0-9_\\[\\]()./%]+:[^ ]+"
+    - identifier.class: " [-A-Za-z0-9_\\[\\]()./%]+"
+    - constant.number: "\\b[0-9]+(\\.[0-9]+)?\\b"
+    - symbol.operator: "[{}=]"

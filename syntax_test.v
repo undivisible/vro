@@ -298,6 +298,28 @@ fn test_v_syntax_word_boundaries_do_not_split_identifiers() {
 	assert syntax_group_at(mut syn, 'if t[i] < `0` || t[i] > `9` {', '||') == 'symbol.operator'
 }
 
+fn test_crepus_syntax_highlights_common_template_parts() {
+	src := os.read_file('syntax/crepus.yaml')!
+	mut syn := compile_syntax_from_yaml(src)!
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'button') == 'symbol.tag'
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'#save') == 'identifier.class'
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'px-4') == 'identifier.class'
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'hover') == 'identifier.class'
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'@click') == 'identifier'
+	assert syntax_group_at(mut syn, 'button #save px-4 py-2 hover:bg-blue-500 @click="save"',
+		'"save"') != 'constant.string'
+	assert syntax_group_at(mut syn, 'if {enabled}', 'if') == 'statement'
+	assert syntax_group_at(mut syn, 'if {onboarding_step == "done"}', '"done"') == 'symbol.operator'
+	assert syntax_group_at(mut syn, 'div text-3xl font-semibold leading-tight "Cupboard"',
+		'"Cupboard"') == 'constant.string'
+	assert syntax_group_at(mut syn, '  "Saved"', '"Saved"') == 'constant.string'
+}
+
 fn test_bundled_v_line_comment_region_does_not_carry() {
 	src := os.read_file('syntax/v.yaml')!
 	mut syn := compile_syntax_from_yaml(src)!
@@ -2197,8 +2219,7 @@ fn test_js_diagnose_colors() {
 
 	// Write realistic JS code to a temp file
 	js_path := os.join_path(os.temp_dir(), 'vro_diag.js')
-	os.write_file(js_path,
-		'const imap = {\n    host: "imap.gmail.com",\n    port: 993,\n    tls: true,\n    connect() {\n        this.socket = null;\n        return true;\n    },\n    async fetch(uid) {\n        const cmd = "FETCH " + uid;\n        return this.send(cmd);\n    },\n    send(raw) {\n        if (!this.socket) {\n            throw new Error("not connected");\n        }\n        this.socket.write(raw);\n        return null;\n    },\n};\n') or {}
+	os.write_file(js_path, 'const imap = {\n    host: "imap.gmail.com",\n    port: 993,\n    tls: true,\n    connect() {\n        this.socket = null;\n        return true;\n    },\n    async fetch(uid) {\n        const cmd = "FETCH " + uid;\n        return this.send(cmd);\n    },\n    send(raw) {\n        if (!this.socket) {\n            throw new Error("not connected");\n        }\n        this.socket.write(raw);\n        return null;\n    },\n};\n') or {}
 	defer { os.rm(js_path) or {} }
 
 	code := os.read_file(js_path) or { panic(err) }

@@ -25,6 +25,7 @@ fn embedded_syntax_yaml(ft string) ?string {
 		'colortest' { $embed_file('syntax/colortest.yaml').to_string() }
 		'conky' { $embed_file('syntax/conky.yaml').to_string() }
 		'cpp' { $embed_file('syntax/cpp.yaml').to_string() }
+		'crepus' { $embed_file('syntax/crepus.yaml').to_string() }
 		'crontab' { $embed_file('syntax/crontab.yaml').to_string() }
 		'crystal' { $embed_file('syntax/crystal.yaml').to_string() }
 		'csharp' { $embed_file('syntax/csharp.yaml').to_string() }
