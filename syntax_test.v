@@ -25,7 +25,7 @@ fn strip_ansi(s string) string {
 }
 
 fn test_vro_version() {
-	assert vro_version == '1.2.2'
+	assert vro_version == '1.2.3'
 }
 
 fn test_syntax_name_for_ext() {
@@ -318,6 +318,10 @@ fn test_crepus_syntax_highlights_common_template_parts() {
 	assert syntax_group_at(mut syn, 'div text-3xl font-semibold leading-tight "Cupboard"',
 		'"Cupboard"') == 'constant.string'
 	assert syntax_group_at(mut syn, '  "Saved"', '"Saved"') == 'constant.string'
+}
+
+fn test_crepus_classes_use_yellow() {
+	assert group_to_ansi('identifier.class') == '\x1b[33m'
 }
 
 fn test_bundled_v_line_comment_region_does_not_carry() {

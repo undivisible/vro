@@ -592,6 +592,9 @@ fn group_to_ansi(group string) string {
 	if g.starts_with('statement') || g.starts_with('keyword') || g == 'preproc' {
 		return '\x1b[35m'
 	}
+	if g.starts_with('identifier.class') || g.starts_with('identifier.attribute') {
+		return '\x1b[33m'
+	}
 	if g.contains('type') {
 		return '\x1b[34m'
 	}
