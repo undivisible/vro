@@ -372,8 +372,3 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
   This Source Code Form is "Incompatible With Secondary Licenses", as
   defined by the Mozilla Public License, v. 2.0.
 
----
-
-Third-party: optional YAML syntax definitions may follow the same general
-layout as micro-editor’s MIT-licensed runtime syntax files. micro:
-https://github.com/micro-editor/micro/blob/master/LICENSE
