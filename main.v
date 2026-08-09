@@ -252,7 +252,7 @@ fn editor_row_rx_to_cx(row Erow, rx int) int {
 }
 
 fn editor_update_row(mut row Erow) {
-	mut renderer := []u8{}
+	mut renderer := []u8{cap: row.chars.len}
 	for ch in row.chars {
 		if ch == `\t` {
 			renderer << ` `
@@ -658,6 +658,7 @@ fn editor_del_char(mut e EditorConfig) {
 		return
 	}
 	e.dirty++
+	e.words_dirty = true
 	editor_hl_carry_mark_dirty_tail(mut e, e.cy)
 }
 
@@ -720,7 +721,13 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 
 fn editor_save_to_path(mut e EditorConfig, filename string) bool {
 	data := editor_rows_to_string(e)
-	os.write_file(filename, data) or {
+	tmp := filename + '.vro.tmp'
+	os.write_file(tmp, data) or {
+		editor_set_status_message(mut e, 'Cannot save! I/O error')
+		return false
+	}
+	os.mv(tmp, filename) or {
+		os.rm(tmp) or {}
 		editor_set_status_message(mut e, 'Cannot save! I/O error')
 		return false
 	}
@@ -2477,6 +2484,17 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		editor_copy_selection(mut e)
 		return true
 	}
+	if c == ctrl_key(`s`) {
+		_ = editor_save(mut e)
+		return true
+	}
+	if c == ctrl_key(`f`) {
+		editor_find(mut e)
+		return true
+	}
+	if c == ctrl_key(`e`) {
+		return editor_command_bar(mut e)
+	}
 	// Navigation-only keys never change text; skip snapshot entirely.
 	match c {
 		key_arrow_up, key_arrow_down, key_arrow_left, key_arrow_right, key_shift_arrow_up,
@@ -2557,17 +2575,6 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 			e.follow_cursor = true
 			editor_complete_reset(mut e)
 			editor_insert_newline(mut e)
-		}
-		ctrl_key(`s`) {
-			_ = editor_save(mut e)
-		}
-		ctrl_key(`f`) {
-			editor_find(mut e)
-		}
-		ctrl_key(`e`) {
-			if !editor_command_bar(mut e) {
-				return false
-			}
 		}
 		ctrl_key(`n`) {
 			e.follow_cursor = true
