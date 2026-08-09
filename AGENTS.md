@@ -21,16 +21,16 @@ Examples:
 Before pushing, ensure the tracked V sources are vfmt-clean:
 
 ```sh
-v fmt -verify main.v input.v syntax.v syntax_test.v
+v fmt -verify main.v input.v syntax.v syntax_test.v syntax_embedded.v
 ```
 
-To fix drift: `v fmt -w main.v input.v syntax.v syntax_test.v` (sometimes a second pass on `input.v` is needed if the formatter stabilizes across files). CI builds **V from `vlang/v` master** each run; a different local `v` binary can disagree on layout—when in doubt, format with the same compiler revision as CI (clone `https://github.com/vlang/v.git`, `make`, then use `./v fmt`).
+To fix drift: `v fmt -w main.v input.v syntax.v syntax_test.v syntax_embedded.v` (sometimes a second pass on `input.v` is needed if the formatter stabilizes across files). CI builds **V from `vlang/v` master** each run; a different local `v` binary can disagree on layout—when in doubt, format with the same compiler revision as CI (clone `https://github.com/vlang/v.git`, `make`, then use `./v fmt`).
 
 GitHub Actions runs this verify step on every push/PR (`ci.yml`) and before release builds (`release.yml`).
 
 ## CI expectations
 
-- `v fmt -verify` on the four `.v` files above
+- `v fmt -verify` on the five `.v` files above
 - `v -gc none -check .`
 - `v -gc none test .`
 - `v -gc none -prod -o vro .`, then `./vro -version` and `--help`

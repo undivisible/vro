@@ -1,3 +1,6 @@
 /vro
+/vro.exe
+*.exe
 *.o
+/dist/
 .DS_Store
