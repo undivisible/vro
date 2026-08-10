@@ -65,8 +65,10 @@ Syntax rules load dynamically from YAML files named `<name>.yaml`, where `<name>
 curl -fsSL https://raw.githubusercontent.com/undivisible/vro/main/install.sh | bash
 ```
 
+Prefer pinning the script to a tag or commit when scripting installs. Release `.sha256` files prove archive integrity against GitHub Releases, not cryptographic authenticity of the publisher.
+
 Clone install (builds with `v` in `PATH`): run `./install.sh` from the repo root.  
-`VRO_USE_RELEASE=1`, `VRO_VERSION=v1.0.0`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`).
+`VRO_USE_RELEASE=1`, `VRO_VERSION=v1.0.0`, `VRO_INSTALL_DIR=…`, `VRO_NO_VERIFY=1` supported (see `install.sh`). Checksums are fetched as `vro-<os>-<arch>.sha256`.
 
 **Shell completions** (optional): copy `contrib/completions/vro.{bash,zsh,fish}` into your shell’s completion path.
 
