@@ -26,7 +26,9 @@ v fmt -verify main.v input.v syntax.v syntax_test.v syntax_embedded.v
 
 To fix drift: `v fmt -w main.v input.v syntax.v syntax_test.v syntax_embedded.v` (sometimes a second pass on `input.v` is needed if the formatter stabilizes across files). CI builds **V from `vlang/v` master** each run; a different local `v` binary can disagree on layout—when in doubt, format with the same compiler revision as CI (clone `https://github.com/vlang/v.git`, `make`, then use `./v fmt`).
 
-GitHub Actions runs this verify step on every push/PR (`ci.yml`) and before release builds (`release.yml`).
+GitHub Actions runs this verify step on every push/PR (`ci.yml`) and before release builds (`release.yml`). Release uses `fmt -verify` on all platforms (including Windows); do not mutate sources with `fmt -w` in release.
+
+`input.v` is an empty `module main` stub retained for historical layout / fmt coverage; editor input lives in `main.v` via `term.ui`.
 
 ## CI expectations
 
@@ -39,6 +41,8 @@ GitHub Actions runs this verify step on every push/PR (`ci.yml`) and before rele
 
 User-facing install docs prefer **Wax** (`wax tap` / `wax install`). **Homebrew** is documented as an alternative that consumes the same tap formula and release assets—keep wording aligned with `README.md` and `scripts/bench-cli.sh` (avoid implying Brew is the only way to get tools like hyperfine).
 
+Release checksum files are named `vro-<platform>.sha256` (not `<archive>.sha256`). Installer and tap scripts must use that name.
+
 ## Change discipline
 
-Match existing naming and structure in `main.v` / `input.v` / `syntax.v`. Prefer small, focused diffs; do not reformat unrelated code.
+Match existing naming and structure in `main.v` / `syntax.v`. Prefer small, focused diffs; do not reformat unrelated code.

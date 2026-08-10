@@ -258,7 +258,7 @@ fn syntax_word_core_bounds(line string, start int, end int) (int, int, bool) {
 }
 
 fn compile_maybe_re(pat string) ?regex.RE {
-	return compile_one_re(pat) or { none }
+	return compile_one_re(pat) or { return none }
 }
 
 fn find_first_regex_group(pat string) (int, int, bool) {
