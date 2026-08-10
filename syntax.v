@@ -121,18 +121,6 @@ fn unquote_dquoted(s string) !string {
 	return error('unclosed quote')
 }
 
-struct YamlPat {
-	group string
-	pat   string
-}
-
-struct YamlReg {
-	group string
-	start string
-	end   string
-	skip  string
-}
-
 enum YamlRuleKind {
 	pat
 	reg
@@ -270,13 +258,7 @@ fn syntax_word_core_bounds(line string, start int, end int) (int, int, bool) {
 }
 
 fn compile_maybe_re(pat string) ?regex.RE {
-	mut p2 := pat.replace('\\b', '')
-	p3 := patch_v_regex(p2)
-	mut re, err, _ := regex.regex_base(p3)
-	if err != regex.compile_ok {
-		return none
-	}
-	return re
+	return compile_one_re(pat) or { none }
 }
 
 fn find_first_regex_group(pat string) (int, int, bool) {
@@ -373,10 +355,30 @@ fn split_alternation_parts(inner string) []string {
 	return parts
 }
 
+// Cap alternation expansion so hostile syntax YAML cannot explode memory/CPU.
+const expand_regex_groups_max = 256
+const expand_regex_groups_max_depth = 12
+
 fn expand_regex_groups(pat string) []string {
+	mut out := []string{}
+	if !expand_regex_groups_into(pat, 0, mut out) || out.len > expand_regex_groups_max {
+		// Fail closed: keep the original pattern (may fail to compile later).
+		return [pat]
+	}
+	if out.len == 0 {
+		return [pat]
+	}
+	return out
+}
+
+fn expand_regex_groups_into(pat string, depth int, mut out []string) bool {
+	if depth > expand_regex_groups_max_depth || out.len >= expand_regex_groups_max {
+		return false
+	}
 	open, close, ok := find_first_regex_group(pat)
 	if !ok {
-		return [pat]
+		out << pat
+		return out.len <= expand_regex_groups_max
 	}
 	prefix := pat[..open]
 	mut suffix := pat[close + 1..]
@@ -390,13 +392,12 @@ fn expand_regex_groups(pat string) []string {
 	if include_empty {
 		parts << ''
 	}
-	mut out := []string{}
 	for part in parts {
-		for expanded in expand_regex_groups(prefix + part + suffix) {
-			out << expanded
+		if !expand_regex_groups_into(prefix + part + suffix, depth + 1, mut out) {
+			return false
 		}
 	}
-	return out
+	return true
 }
 
 fn compile_syntax_from_yaml(src string) !CompiledSyntax {
@@ -630,78 +631,7 @@ fn hl_region_find_end(mut cr CompiledReg, line string, search int) int {
 	return -1
 }
 
-// carry_in: region opened on a previous line without a closing end yet.
-// Returns carry_out: true if the region is still unclosed at end of this line.
-fn hl_apply_region(mut owners []int, mut groups []string, mut region_owned []bool, line string, ri int, mut cr CompiledReg, carry_in bool) bool {
-	mut pos := 0
-	if carry_in {
-		end_abs := hl_region_find_end(mut cr, line, 0)
-		if end_abs < 0 {
-			for k := 0; k < line.len; k++ {
-				if region_owned[k] {
-					continue
-				}
-				owners[k] = ri
-				groups[k] = cr.group
-				region_owned[k] = true
-			}
-			return true
-		}
-		for k := 0; k < end_abs && k < line.len; k++ {
-			if region_owned[k] {
-				continue
-			}
-			owners[k] = ri
-			groups[k] = cr.group
-			region_owned[k] = true
-		}
-		pos = end_abs
-	}
-	for pos < line.len {
-		st, en := cr.st.find_from(line, pos)
-		if st < 0 {
-			break
-		}
-		if cr.start_line && st != 0 {
-			break
-		}
-		if en <= st {
-			pos++
-			continue
-		}
-		// Don't start a region at a position already owned by another region
-		// (e.g. double-quote inside single-quoted string)
-		if region_owned[st] {
-			pos = en
-			continue
-		}
-		search := en
-		end_abs := hl_region_find_end(mut cr, line, search)
-		if end_abs < 0 {
-			for k := st; k < line.len; k++ {
-				if region_owned[k] {
-					continue
-				}
-				owners[k] = ri
-				groups[k] = cr.group
-				region_owned[k] = true
-			}
-			return true
-		}
-		for k := st; k < end_abs && k < line.len; k++ {
-			if region_owned[k] {
-				continue
-			}
-			owners[k] = ri
-			groups[k] = cr.group
-			region_owned[k] = true
-		}
-		pos = end_abs
-	}
-	return false
-}
-
-// Region carry only (no coloring). Must stay in sync with hl_apply_region.
+// Region carry only (no coloring). Must stay in sync with hl_fill_owners region logic.
 fn hl_reg_carry_through_line(mut cr CompiledReg, line string, carry_in bool) bool {
 	mut pos := 0
 	if carry_in {

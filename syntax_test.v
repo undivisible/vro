@@ -2472,6 +2472,20 @@ fn test_js_string_escape_seq() {
 	assert g2[10] == 'constant.specialChar', 'n:' + g2[10]
 }
 
+fn test_expand_regex_groups_basic_and_cap() {
+	simple := expand_regex_groups('foo')
+	assert simple == ['foo']
+	alts := expand_regex_groups('(a|b)x')
+	assert alts.len == 2
+	assert 'ax' in alts
+	assert 'bx' in alts
+	// Nested alternations that would explode must fail closed to the original pattern.
+	hostile := '((((((((a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b)(a|b))))))))'
+	capped := expand_regex_groups(hostile)
+	assert capped.len == 1
+	assert capped[0] == hostile
+}
+
 fn test_js_new_patterns() {
 	src := os.read_file('syntax/javascript.yaml') or { panic(err) }
 	mut syn := compile_syntax_from_yaml(src) or { panic(err) }

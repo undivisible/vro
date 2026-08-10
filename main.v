@@ -692,17 +692,7 @@ fn editor_load_buffer_content(mut e EditorConfig, content string) {
 }
 
 fn editor_open(mut e EditorConfig, filename string) ! {
-	e.hl_cache_path = ''
-	e.filename = filename
-	content := os.read_file(filename)!
-	editor_load_buffer_content(mut e, content)
-	e.cx = 0
-	e.cy = 0
-	e.rx = 0
-	e.rowoff = 0
-	e.coloff = 0
-	e.dirty = 0
-	editor_refresh_git_marks(mut e)
+	editor_open_into_buffer(mut e, filename)!
 }
 
 fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
@@ -721,14 +711,14 @@ fn editor_open_into_buffer(mut e EditorConfig, filename string) ! {
 
 fn editor_save_to_path(mut e EditorConfig, filename string) bool {
 	data := editor_rows_to_string(e)
-	tmp := filename + '.vro.tmp'
+tmp := filename + '.vro.tmp'
 	os.write_file(tmp, data) or {
-		editor_set_status_message(mut e, 'Cannot save! I/O error')
+		editor_set_status_message(mut e, 'Cannot save! I/O error: ${err.msg()}')
 		return false
 	}
 	os.mv(tmp, filename) or {
 		os.rm(tmp) or {}
-		editor_set_status_message(mut e, 'Cannot save! I/O error')
+		editor_set_status_message(mut e, 'Cannot save! I/O error: ${err.msg()}')
 		return false
 	}
 	e.filename = filename
@@ -954,6 +944,18 @@ fn editor_ensure_syntax(mut e EditorConfig) {
 	}
 }
 
+fn hl_carry_states_equal(a []bool, b []bool) bool {
+	if a.len != b.len {
+		return false
+	}
+	for i in 0 .. a.len {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 fn editor_ensure_hl_carry(mut e EditorConfig) {
 	if e.hl_disable || e.hl_syn.rules.len == 0 {
 		e.hl_carry_enter = [][]bool{}
@@ -982,6 +984,10 @@ fn editor_ensure_hl_carry(mut e EditorConfig) {
 			line := e.rows[li].render.bytestr()
 			carry = hl_carry_row(mut e.hl_syn, line, carry)
 			e.rows[li].hl_cached = false
+			// If leave-carry matches the next row's existing enter state, the tail is stable.
+			if li + 1 < e.rows.len && hl_carry_states_equal(carry, e.hl_carry_enter[li + 1]) {
+				break
+			}
 		}
 		e.hl_carry_dirty_from = -1
 		return
@@ -1623,14 +1629,16 @@ fn editor_prompt_key(mut e EditorConfig, key int) bool {
 	return true
 }
 
+fn editor_clear_screen() {
+	print('\x1b[2J')
+	print('\x1b[H')
+}
+
 fn editor_run_command(mut e EditorConfig, input string) bool {
-	cmdline := input.trim_space()
-	if cmdline.len == 0 {
+	cmd, args := app_command_parts(input)
+	if cmd.len == 0 {
 		return true
 	}
-	parts := cmdline.split(' ')
-	cmd := parts[0].to_lower()
-	args := if parts.len > 1 { cmdline[cmd.len + 1..].trim_space() } else { '' }
 
 	match cmd {
 		'q', 'quit', 'exit', 'x' {
@@ -1639,13 +1647,11 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 				editor_set_status_message(mut e, msg)
 				return true
 			}
-			print('\x1b[2J')
-			print('\x1b[H')
+			editor_clear_screen()
 			return false
 		}
 		'q!', 'quit!', 'exit!', 'x!' {
-			print('\x1b[2J')
-			print('\x1b[H')
+			editor_clear_screen()
 			return false
 		}
 		'wq' {
@@ -1656,8 +1662,7 @@ fn editor_run_command(mut e EditorConfig, input string) bool {
 			if e.dirty > 0 {
 				return true
 			}
-			print('\x1b[2J')
-			print('\x1b[H')
+			editor_clear_screen()
 			return false
 		}
 		'w', 'write', 'save' {
@@ -2554,7 +2559,15 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 		else {}
 	}
 
-	snap_before := editor_snapshot(e)
+	// Skip full-buffer undo snapshots for keys that never mutate text.
+	// Find/save only allocate when needed; command bar can still mutate.
+	skip_undo_snap := c == ctrl_key(`f`) || c == ctrl_key(`s`)
+	mut snap_before := EditorSnapshot{}
+	mut have_snap := false
+	if !skip_undo_snap {
+		snap_before = editor_snapshot(e)
+		have_snap = true
+	}
 	dirty_before := e.dirty
 	match c {
 		ctrl_key(`x`) {
@@ -2633,11 +2646,13 @@ fn editor_process_key(mut e EditorConfig, c int, text string) bool {
 	}
 
 	if e.dirty != dirty_before {
-		e.undo_stack << snap_before
-		if e.undo_stack.len > undo_stack_max {
-			e.undo_stack.delete(0)
+		if have_snap {
+			e.undo_stack << snap_before
+			if e.undo_stack.len > undo_stack_max {
+				e.undo_stack.delete(0)
+			}
+			e.redo_stack = []EditorSnapshot{}
 		}
-		e.redo_stack = []EditorSnapshot{}
 	}
 	if e.dirty != dirty_before || e.dirty == 0 {
 		e.quit_times_left = quit_times
@@ -2755,7 +2770,7 @@ fn is_terminal_command_name(s string) bool {
 
 fn app_split_open(mut app VroApp, split EditorPaneSplit, path string) bool {
 	if path.len == 0 {
-		app_set_status_message(mut app, 'Usage: split <path>')
+		app_set_status_message(mut app, 'Usage: right|left|top|bottom <path>')
 		return true
 	}
 	if is_terminal_command_name(path) {
