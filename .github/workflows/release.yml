@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -72,14 +72,6 @@ jobs:
           cd "${GITHUB_WORKSPACE}"
           "${V}" fmt -verify main.v input.v syntax.v syntax_test.v syntax_embedded.v
 
-      - name: Format sources (windows)
-        if: matrix.os == 'windows-latest'
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd "${GITHUB_WORKSPACE}"
-          "${V}" fmt -w main.v input.v syntax.v syntax_test.v syntax_embedded.v
-
       - name: Build vro
         shell: bash
         run: |
@@ -106,6 +98,7 @@ jobs:
           cp -R syntax "dist/syntax"
           (cd dist && tar -czf "vro-${{ matrix.asset_suffix }}.tar.gz" ${{ matrix.bin }} syntax)
           (cd dist && shasum -a 256 "vro-${{ matrix.asset_suffix }}.tar.gz" > "vro-${{ matrix.asset_suffix }}.sha256")
+          rm -rf "dist/${{ matrix.bin }}" dist/syntax
 
       - name: Package (zip)
         if: matrix.ext == 'zip'
@@ -118,16 +111,21 @@ jobs:
           Set-Location dist
           Compress-Archive -Path ${{ matrix.bin }},syntax -DestinationPath "vro-${{ matrix.asset_suffix }}.zip"
           (Get-FileHash "vro-${{ matrix.asset_suffix }}.zip" -Algorithm SHA256).Hash.ToLower() + "  vro-${{ matrix.asset_suffix }}.zip" | Out-File -FilePath "vro-${{ matrix.asset_suffix }}.sha256" -Encoding ascii
+          Remove-Item -Recurse -Force ${{ matrix.bin }}, syntax
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.asset_suffix }}
-          path: dist/*
+          path: |
+            dist/vro-${{ matrix.asset_suffix }}.${{ matrix.ext }}
+            dist/vro-${{ matrix.asset_suffix }}.sha256
 
   publish:
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -136,6 +134,9 @@ jobs:
           merge-multiple: true
 
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: dist/*
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256

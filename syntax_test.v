@@ -1099,6 +1099,54 @@ fn test_backspace_deletes_selection() {
 	assert !e.selection_active
 }
 
+fn test_del_char_marks_words_dirty() {
+	mut row := Erow{
+		chars:  'one two'.bytes()
+		render: []u8{}
+	}
+	editor_update_row(mut row)
+	mut e := EditorConfig{
+		rows:            [row]
+		screenrows:      3
+		screencols:      40
+		quit_times_left: quit_times
+		cx:              3
+		cy:              0
+	}
+	assert editor_word_count_get(mut e) == 2
+	assert !e.words_dirty
+	editor_del_char(mut e)
+	assert e.rows[0].chars.bytestr() == 'on two'
+	assert e.words_dirty
+	assert editor_word_count_get(mut e) == 2
+}
+
+fn test_save_replaces_via_temp_file() {
+	path := os.join_path(os.temp_dir(), 'vro-atomic-save-test.txt')
+	tmp := path + '.vro.tmp'
+	defer {
+		if os.exists(path) {
+			os.rm(path) or {}
+		}
+		if os.exists(tmp) {
+			os.rm(tmp) or {}
+		}
+	}
+	os.write_file(path, 'old')!
+	mut e := EditorConfig{
+		filename: path
+		rows:     [Erow{
+			chars:  'new'.bytes()
+			render: 'new'.bytes()
+		}]
+		dirty:    1
+	}
+	assert editor_save_to_path(mut e, path)
+	assert os.read_file(path)! == 'new'
+	assert !os.exists(tmp)
+	assert e.dirty == 0
+}
+
 fn test_open_save_preserves_trailing_newline() {
 	path := os.join_path(os.temp_dir(), 'vro-trailing-newline-test.txt')
 	defer {

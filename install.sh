@@ -80,16 +80,18 @@ install_from_release() {
   TMP="$(mktemp -d)"
   trap 'rm -rf "${TMP:-}"' EXIT
 
+  SHA_ASSET="vro-${os}-${arch}.sha256"
+
   if command -v curl &>/dev/null; then
     curl -fsSL --progress-bar "${BASE_URL}/${ASSET}" -o "${TMP}/vro.tgz"
     HAVE_SHA=0
-    if curl -fsSL "${BASE_URL}/${ASSET}.sha256" -o "${TMP}/vro.tgz.sha256" 2>/dev/null; then
+    if curl -fsSL "${BASE_URL}/${SHA_ASSET}" -o "${TMP}/vro.tgz.sha256" 2>/dev/null; then
       HAVE_SHA=1
     fi
   elif command -v wget &>/dev/null; then
     wget -q --show-progress "${BASE_URL}/${ASSET}" -O "${TMP}/vro.tgz"
     HAVE_SHA=0
-    if wget -q "${BASE_URL}/${ASSET}.sha256" -O "${TMP}/vro.tgz.sha256" 2>/dev/null; then
+    if wget -q "${BASE_URL}/${SHA_ASSET}" -O "${TMP}/vro.tgz.sha256" 2>/dev/null; then
       HAVE_SHA=1
     fi
   else
@@ -115,7 +117,19 @@ install_from_release() {
     die "No checksum file for ${VERSION}; set VRO_NO_VERIFY=1 to install without verification"
   fi
 
+  while IFS= read -r member; do
+    case "$member" in
+      *..*|/*|\\*) die "unsafe archive member: $member" ;;
+    esac
+  done < <(tar -tzf "${TMP}/vro.tgz")
+
   tar -xzf "${TMP}/vro.tgz" -C "$TMP"
+  if [ ! -f "${TMP}/vro" ] || [ -L "${TMP}/vro" ]; then
+    die "archive missing regular file 'vro'"
+  fi
+  if [ -e "${TMP}/syntax" ] && [ -L "${TMP}/syntax" ]; then
+    die "archive has unsafe symlink 'syntax'"
+  fi
   chmod +x "${TMP}/vro"
   mkdir -p "$INSTALL_DIR"
   mv "${TMP}/vro" "${INSTALL_DIR}/vro"
